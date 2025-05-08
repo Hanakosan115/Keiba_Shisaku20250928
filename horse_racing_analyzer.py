@@ -6,24 +6,24 @@ import pickle
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd # type: ignore
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg # type: ignore
 import threading
 import random
 from datetime import datetime
-import requests # 追加
-from bs4 import BeautifulSoup # 追加
+import requests # type: ignore # 追加
+from bs4 import BeautifulSoup # type: ignore # 追加
 import re # 追加
 import time # 追加
 import traceback # 追加
 import time as _time
-from selenium import webdriver # 追加
-from selenium.webdriver.common.by import By # 追加
-from selenium.webdriver.support import expected_conditions as EC # 追加
-from selenium.webdriver.support.ui import WebDriverWait # 追加
-from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException # 追加
-from selenium.webdriver.chrome.service import Service as ChromeService # 追加
+from selenium import webdriver # type: ignore # 追加
+from selenium.webdriver.common.by import By # type: ignore # type: ignore # 追加
+from selenium.webdriver.support import expected_conditions as EC # type: ignore # 追加
+from selenium.webdriver.support.ui import WebDriverWait # type: ignore # type: ignore # 追加
+from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException # type: ignore # 追加
+from selenium.webdriver.chrome.service import Service as ChromeService # type: ignore # type: ignore # 追加
 
 # --- Matplotlibの日本語設定 (Windows向け) ---
 # 使用可能な日本語フォントを指定してください。
@@ -601,8 +601,198 @@ class HorseRacingAnalyzerApp:
             traceback.print_exc()
         return []
     
-    # --- 部品関数5: 出馬表テーブル取得 (shutuba_past.html 対応版) ---
+    # --- 部品関数5: 出馬表テーブル取得 (shutuba_past.html 対応・リアルタイム予測考慮版) ---
     def get_shutuba_table(self, race_id):
+        """
+        shutuba_past.html から出馬表テーブルデータを辞書のリストで取得する。
+        リアルタイム予測のための情報取得も意識する。
+        """
+        url = f'https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}' # ★ ターゲットURL
+        print(f"      出馬表(過去走付)取得試行: {url}")
+        driver = None
+        # --- WebDriverセットアップ (元のコードと同じ) ---
+        options = webdriver.ChromeOptions()
+        options.add_argument(f'--user-agent={self.USER_AGENT}')
+        #options.add_argument('--headless') # 必要ならコメント解除
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument("--log-level=3")
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        # --- ここまでセットアップ ---
+        shutuba_data_list = [] # 辞書のリストとして結果を格納
+
+        try:
+            # --- WebDriver起動 (元のコードと同じ) ---
+            if self.CHROME_DRIVER_PATH and os.path.exists(self.CHROME_DRIVER_PATH):
+                service = ChromeService(executable_path=self.CHROME_DRIVER_PATH)
+                driver = webdriver.Chrome(service=service, options=options)
+            else:
+                print("        警告: ChromeDriverのパスが設定されていないか無効です。環境変数PATHから探します。")
+                driver = webdriver.Chrome(options=options)
+            # --- ここまで起動 ---
+
+            wait = WebDriverWait(driver, self.SELENIUM_WAIT_TIMEOUT)
+            driver.get(url)
+
+            # ★★★ テーブル要素のセレクタを確認・調整 ★★★
+            # shutuba_past.html の主要な出馬表テーブルを特定するセレクタです。
+            # 枠順確定後のページでもこのセレクタで正しいテーブルが取得できるか確認してください。
+            table_selector = '.Shutuba_Table.Shutuba_Past5_Table'
+            print(f"        Waiting for table element: {table_selector}")
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, table_selector)))
+            time.sleep(self.SLEEP_TIME_PER_PAGE / 2) # 描画完了待ち
+            soup = BeautifulSoup(driver.page_source, 'lxml')
+            table_tag = soup.select_one(table_selector)
+
+            if not table_tag:
+                print(f"        警告: 出馬表テーブルが見つかりませんでした ({race_id})。")
+                return []
+
+            # ★★★ 各馬の情報が含まれる行を取得するセレクタを確認・調整 ★★★
+            # 通常は <tbody> の中の <tr class="HorseList"> かもしれません。これも確認してください。
+            horse_rows_selector = 'tbody > tr.HorseList'
+            horse_rows = table_tag.select(horse_rows_selector)
+            print(f"        出馬表テーブルから {len(horse_rows)} 頭のデータを処理します (Selector: '{horse_rows_selector}')")
+            # --- デバッグ用: HTMLの一部を表示 ---
+            # if table_tag: print(f"DEBUG: Table HTML (snippet):\n{str(table_tag)[:500]}\n--------------------")
+
+            for i, row_tag in enumerate(horse_rows): # enumerate を使って行番号を取得
+                row_data = {'race_id': race_id} # 各行のデータを格納する辞書
+                cells = row_tag.select('td') # その行の全セル(<td>)を取得
+                
+                # --- デバッグ用: 各行のセル数と内容を表示 ---
+                # print(f"\n--- Processing Row {i+1} ---")
+                # print(f"DEBUG: Number of cells found: {len(cells)}")
+                # for cell_idx, cell in enumerate(cells):
+                #     print(f"DEBUG: Cell {cell_idx}: {cell.get_text(strip=True)[:50]}") # 各セルのテキスト内容(最初の50文字)
+
+                # --- 各情報をCSSセレクタやインデックスで取得 (ここを慎重に確認・調整！) ---
+                # ブラウザの「検証」機能で、実際のHTML構造と照らし合わせてください。
+                try:
+                    # === 枠番 ===
+                    waku_index = 0 # ★★★ インデックス番号を確認・調整 ★★★
+                    if len(cells) > waku_index:
+                        row_data['Waku'] = cells[waku_index].get_text(strip=True)
+                        # print(f"DEBUG: Waku (Index {waku_index}): {row_data.get('Waku')}")
+                    else: row_data['Waku'] = None
+
+                    # === 馬番 ===
+                    umaban_index = 1 # ★★★ インデックス番号を確認・調整 ★★★
+                    if len(cells) > umaban_index:
+                        row_data['Umaban'] = cells[umaban_index].get_text(strip=True)
+                        # print(f"DEBUG: Umaban (Index {umaban_index}): {row_data.get('Umaban')}")
+                    else: row_data['Umaban'] = None
+
+                    # === 馬情報セル (馬名、父、母父、馬IDなどを含むセル) ===
+                    horse_info_cell_index = 3 # ★★★ インデックス番号を確認・調整 ★★★
+                    if len(cells) > horse_info_cell_index:
+                        horse_info_td = cells[horse_info_cell_index]
+                        # print(f"DEBUG: Horse Info Cell HTML (snippet): {str(horse_info_td)[:100]}") # デバッグ用
+
+                        # --- 父 ---
+                        father_selector = 'div.Horse01' # ★★★ CSSセレクタを確認・調整 ★★★
+                        row_data['father'] = horse_info_td.select_one(father_selector).get_text(strip=True) if horse_info_td.select_one(father_selector) else None
+                        # print(f"DEBUG: Father: {row_data.get('father')}")
+
+                        # --- 馬名と馬ID ---
+                        horse_link_selector = 'div.Horse02 > a' # ★★★ CSSセレクタを確認・調整 ★★★
+                        horse_link = horse_info_td.select_one(horse_link_selector)
+                        row_data['HorseName'] = horse_link.get_text(strip=True) if horse_link else None
+                        horse_url = horse_link.get('href') if horse_link else None
+                        horse_id_match = re.search(r'/horse/(\d+)', str(horse_url))
+                        row_data['horse_id'] = horse_id_match.group(1) if horse_id_match else None
+                        # print(f"DEBUG: HorseName: {row_data.get('HorseName')}")
+                        # print(f"DEBUG: horse_id: {row_data.get('horse_id')}")
+
+                        # --- 母父 ---
+                        mf_selector = 'div.Horse04' # ★★★ CSSセレクタを確認・調整 ★★★
+                        mf_div = horse_info_td.select_one(mf_selector)
+                        if mf_div:
+                            mf_text = mf_div.get_text(strip=True)
+                            row_data['mother_father'] = mf_text[1:-1] if mf_text.startswith('(') and mf_text.endswith(')') else mf_text
+                        else:
+                            row_data['mother_father'] = None
+                        # print(f"DEBUG: Mother's Father: {row_data.get('mother_father')}")
+                        
+                        # --- 調教師 ---
+                        trainer_selector = 'div.Horse05 > a' # ★★★ CSSセレクタを確認・調整 ★★★
+                        row_data['TrainerName'] = horse_info_td.select_one(trainer_selector).get_text(strip=True) if horse_info_td.select_one(trainer_selector) else None
+                        # print(f"DEBUG: TrainerName: {row_data.get('TrainerName')}")
+
+                        # --- 馬体重情報 (レース当日近くにならないと表示されない可能性あり) ---
+                        weight_selector = 'div.Weight' # ★★★ CSSセレクタを確認・調整 ★★★
+                        weight_div = horse_info_td.select_one(weight_selector)
+                        row_data['WeightInfoShutuba'] = weight_div.get_text(strip=True).replace('\n','').replace('\r','') if weight_div else None
+                        # print(f"DEBUG: WeightInfoShutuba: {row_data.get('WeightInfoShutuba')}")
+
+                    else: # 馬情報セルが見つからない場合
+                         print(f"        WARN: Horse Info cell not found at index {horse_info_cell_index} for row {i+1}")
+                         # 不足しているキーをNoneで初期化
+                         row_data.update({'father': None, 'HorseName': None, 'horse_id': None, 'mother_father': None, 'TrainerName': None, 'WeightInfoShutuba': None})
+
+
+                    # === 騎手情報セル (性齢、騎手、斤量を含むセル) ===
+                    jockey_cell_index = 4 # ★★★ インデックス番号を確認・調整 ★★★
+                    if len(cells) > jockey_cell_index:
+                        jockey_td = cells[jockey_cell_index]
+                        # print(f"DEBUG: Jockey Info Cell HTML (snippet): {str(jockey_td)[:100]}") # デバッグ用
+
+                        # --- 性齢 ---
+                        sexage_selector = 'span.Barei' # ★★★ CSSセレクタを確認・調整 ★★★
+                        row_data['SexAge'] = jockey_td.select_one(sexage_selector).get_text(strip=True) if jockey_td.select_one(sexage_selector) else None
+                        # print(f"DEBUG: SexAge: {row_data.get('SexAge')}")
+
+                        # --- 騎手 ---
+                        jockey_selector = 'a' # ★★★ CSSセレクタを確認・調整 (td内のaタグという前提) ★★★
+                        row_data['JockeyName'] = jockey_td.select_one(jockey_selector).get_text(strip=True) if jockey_td.select_one(jockey_selector) else None
+                        # print(f"DEBUG: JockeyName: {row_data.get('JockeyName')}")
+
+                        # --- 斤量 ---
+                        load_selector = 'span' # ★★★ CSSセレクタを確認・調整 (td内の最後のspanという前提) ★★★
+                        load_span = jockey_td.select(load_selector)[-1] if jockey_td.select(load_selector) else None
+                        row_data['Load'] = load_span.get_text(strip=True) if load_span else None
+                        # print(f"DEBUG: Load: {row_data.get('Load')}")
+
+                    else: # 騎手情報セルが見つからない場合
+                         print(f"        WARN: Jockey Info cell not found at index {jockey_cell_index} for row {i+1}")
+                         # 不足しているキーをNoneで初期化
+                         row_data.update({'SexAge': None, 'JockeyName': None, 'Load': None})
+
+                    # --- 予測に不要な情報 (オッズ、人気、過去走など) の取得はコメントアウトまたは削除してもOK ---
+                    # row_data['OddsShutuba'] = ...
+                    # row_data['NinkiShutuba'] = ...
+
+                    # 必要なキーが揃っているかチェックしてからリストに追加 (元のコードと同様)
+                    required_keys = ['race_id', 'Waku', 'Umaban', 'HorseName', 'horse_id', 'father', 'mother_father', 'SexAge', 'Load', 'JockeyName'] # リアルタイム予測に必要な最低限のキー（例）
+                    if all(key in row_data and pd.notna(row_data[key]) for key in required_keys): # Noneでないかもチェック
+                        shutuba_data_list.append(row_data)
+                        # print(f"DEBUG: Row {i+1} added to list.")
+                    else:
+                        print(f"        WARN: Row {i+1} data is incomplete or missing required keys. Skipping row. Data: {row_data}")
+
+                except Exception as e_row:
+                    print(f"        ERROR: Error processing row {i+1} in get_shutuba_table for {race_id}. Error: {type(e_row).__name__}: {e_row}")
+                    # traceback.print_exc() # デバッグ時に詳細表示
+
+        # (元のコードの TimeoutException, WebDriverException, Exception, finally 節)
+        except TimeoutException:
+            print(f"  Seleniumタイムアウトエラー (要素待機): {url}")
+        except WebDriverException as e:
+            print(f"  WebDriverエラー ({url}): {e}")
+        except Exception as e:
+            print(f"  予期せぬエラー (get_shutuba_table) ({url}): {e}")
+            traceback.print_exc()
+        finally:
+            if driver:
+                try: driver.quit()
+                except Exception: pass
+
+        print(f"        出馬表データ取得完了: {len(shutuba_data_list)} 件")
+        return shutuba_data_list # 辞書のリストを返す
+    
+    # --- 部品関数5: 出馬表テーブル取得 (shutuba_past.html 対応版) ---
+    # def get_shutuba_table(self, race_id):
         """shutuba_past.html から出馬表テーブルデータを辞書のリストで取得"""
         url = f'https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}' # ★ URLは shutuba_past.html
         print(f"      出馬表(過去走付)取得試行: {url}")
@@ -1991,8 +2181,8 @@ class HorseRacingAnalyzerApp:
         start_time = _time.time()
 
         # --- 必要なモジュールをインポート ---
-        import pandas as pd
-        import numpy as np
+        import pandas as pd # type: ignore # type: ignore
+        import numpy as np # type: ignore
         import traceback
         import re
         # --- ここまでインポート ---
@@ -2162,8 +2352,8 @@ class HorseRacingAnalyzerApp:
         start_time = _time.time() # ★ time ではなく _time を使う
 
         # 必要なモジュールをインポート (既にあれば不要)
-        import pandas as pd
-        import numpy as np
+        import pandas as pd # type: ignore
+        import numpy as np # type: ignore
         # import time # ← ファイル先頭で _time としてインポート済みなら不要
         import traceback
 
@@ -2265,138 +2455,11 @@ class HorseRacingAnalyzerApp:
         print(f"モデル学習用データの準備完了。Shape X: {X.shape}, y: {y.shape} ({end_time - start_time:.2f}秒)")
         self.root.after(0, lambda: self.update_status("学習データ準備完了"))
         return X, y
-
-    # --- 既存のヘルパー関数 (_get_race_class_level, _time_str_to_sec) はそのまま ---
-        """
-        self.processed_data の各行について calculate_original_index を実行し、
-        その結果の特徴量と正解ラベルから学習用データ (X, y) を作成して返す。
-        """
-        print("モデル学習用のデータ準備を開始します (calculate_original_index を使用)...")
-        self.update_status("学習データ準備中...")
-        start_time = _time.time() # time を使うので import time (または _time) が必要
-
-        # processed_data と 必要な統計データの存在チェック
-        required_attrs = ['processed_data', 'course_time_stats', 'father_stats',
-                          'mother_father_stats', 'gate_stats', 'reference_times',
-                          'horse_details_cache'] # キャッシュも必要
-        missing_attrs = [attr for attr in required_attrs if not hasattr(self, attr) or getattr(self, attr) is None]
-
-        if missing_attrs or self.processed_data.empty:
-            print(f"エラー: 学習データ準備に必要なデータが不足しています: {missing_attrs}")
-            if self.processed_data is not None and self.processed_data.empty:
-                 print("   (processed_data is empty)")
-            self.update_status("エラー: データ準備不足")
-            return None, None # X, y を返すので None, None
-
-        all_features_list = [] # 各馬の特徴量辞書を格納するリスト
-        target_list = []       # 各馬の正解ラベルを格納するリスト
-        skipped_rows = 0       # スキップされた行数
-
-        num_rows = len(self.processed_data)
-        print(f"INFO: processed_data の {num_rows} 行を処理します...")
-
-        # processed_data を1行ずつ処理
-        for index, row in self.processed_data.iterrows():
-            if index > 0 and index % 500 == 0: # 500行ごとに進捗表示
-                 progress_percent = (index / num_rows) * 100
-                 # UI更新はメインスレッドで行う
-                 self.root.after(0, lambda i=index, n=num_rows, p=progress_percent: self.update_status(f"学習データ作成中... ({i}/{n} - {p:.0f}%)"))
-
-            # 1. レース条件を作成
-            race_conditions = {
-                'course_type': row.get('course_type'),
-                'distance': pd.to_numeric(row.get('distance'), errors='coerce'),
-                'track_name': row.get('track_name'),
-                'baba': row.get('track_condition')
-            }
-            if pd.isna(race_conditions['distance']): race_conditions['distance'] = None
-            else: race_conditions['distance'] = int(race_conditions['distance'])
-
-            # 2. horse_details を作成 (row を辞書化し、キャッシュから race_results をマージ)
-            horse_details_for_calc = row.to_dict() # Series を辞書に
-            horse_id = horse_details_for_calc.get('horse_id')
-            if horse_id and pd.notna(horse_id):
-                # horse_id をキャッシュ検索用に文字列に変換
-                horse_id_str = str(int(horse_id)) if isinstance(horse_id, (int, float, np.number)) else str(horse_id)
-                details_from_cache = self.horse_details_cache.get(horse_id_str)
-                if details_from_cache and 'race_results' in details_from_cache:
-                    horse_details_for_calc['race_results'] = details_from_cache['race_results']
-                else:
-                    # print(f"WARN: Cache miss or no race_results for horse_id {horse_id}. Using empty list.")
-                    horse_details_for_calc['race_results'] = [] # キャッシュミスや戦績なしの場合は空リスト
-            else:
-                 horse_details_for_calc['race_results'] = [] # horse_id がない場合も空リスト
-
-            # 3. 特徴量計算を実行
-            # calculate_original_index は (指数, 特徴量辞書) を返す
-            _, features = self.calculate_original_index(horse_details_for_calc, race_conditions)
-
-            # 4. 正解ラベルを作成 (Rank列の存在確認と数値化)
-            rank_val = pd.to_numeric(row.get('Rank'), errors='coerce') # 元のRank列を使う
-            if pd.isna(rank_val): # 着順が不明なデータは学習に使わない
-                skipped_rows += 1
-                continue # 次の行へ
-            target = 1 if rank_val <= 3 else 0
-
-            # 5. 結果をリストに追加 (エラーがない場合のみ)
-            if features.get('error') is None:
-                all_features_list.append(features)
-                target_list.append(target)
-            else:
-                 skipped_rows += 1
-                 # print(f"WARN: Skipping row due to error in feature calculation: {features.get('error')}")
-
-        # ループ終了後の処理
-        if skipped_rows > 0:
-            print(f"INFO: {skipped_rows} rows were skipped due to missing rank or feature calculation errors.")
-
-        if not all_features_list:
-             print("エラー: 有効な特徴量データがありません。学習データを作成できませんでした。")
-             self.root.after(0, lambda: self.update_status("エラー: 特徴量計算失敗"))
-             return None, None
-
-        # 特徴量リストから DataFrame を作成
-        X = pd.DataFrame(all_features_list)
-        y = pd.Series(target_list, index=X.index) # 正解ラベルを Series に、インデックスを合わせる
-
-        # --- 学習に使用する特徴量を選択 (再度、最終的な X の列から選択) ---
-        # (calculate_original_index が返す features 辞書のキーと合わせる)
-        feature_cols_final = [
-            'Age', '斤量絶対値', '斤量前走差', '負担率', '馬体重絶対値', '馬体重前走差', '枠番',
-            '同条件出走数', '同条件複勝率', '枠番_複勝率', '枠番_N数',
-            'タイム偏差値', '基準タイム差', '基準タイム比', '同コース距離最速補正',
-            '父同条件複勝率', '父同条件N数', '母父同条件複勝率', '母父同条件N数',
-            '近走1走前着順', '着差_1走前', '上がり3F_1走前',
-            '近走2走前着順', '着差_2走前', '上がり3F_2走前',
-            '近走3走前着順', '着差_3走前', '上がり3F_3走前'
-            # ★ 必要に応じて他の特徴量キーを追加 ★
-        ]
-        # X に存在する列のみを選択 (エラーなどで一部列が欠損している可能性も考慮)
-        feature_cols_final = [col for col in feature_cols_final if col in X.columns]
-        X = X[feature_cols_final].copy() # 最終的な特徴量を選択しコピー
-        print(f"最終的な学習特徴量 ({len(feature_cols_final)}個): {feature_cols_final}")
-
-        # --- 欠損値処理 (再度確認・実行) ---
-        print("最終的な特徴量データの欠損値を平均値で補完します...")
-        missing_before = X.isnull().sum().sum()
-        if missing_before > 0:
-            cols_with_nan = X.columns[X.isnull().any()].tolist()
-            print(f"  欠損値を含む列: {cols_with_nan}")
-            for col in cols_with_nan:
-                mean_val = X[col].mean()
-                if pd.isna(mean_val): mean_val = 0 # 平均がNaNなら0で埋める
-                X[col].fillna(mean_val, inplace=True)
-                # print(f"    列 '{col}' を平均 ({mean_val:.2f}) で補完.")
-        missing_after = X.isnull().sum().sum()
-        print(f"  補完前の欠損値数: {missing_before}, 補完後の欠損値数: {missing_after}")
-        if missing_after > 0: print("警告: 欠損値補完後もNaNが残っています。要確認。")
-
-        end_time = _time.time()
-        print(f"モデル学習用データの準備完了。Shape X: {X.shape}, y: {y.shape} ({end_time - start_time:.2f}秒)")
-        self.root.after(0, lambda: self.update_status("学習データ準備完了")) # UI更新はメインスレッド
-        return X, y
     
-    # --- ★★★ モデル学習・評価メソッド (新規追加) ★★★ ---
+    # horse_racing_analyzer.py の HorseRacingAnalyzer クラス内
+# 既存の train_and_evaluate_model メソッドをまるごと置き換えてください。
+
+    # --- ★★★ モデル学習・評価メソッド ★★★ ---
     def train_and_evaluate_model(self):
         """
         準備された学習データ (X, y) を使ってLightGBMモデルを学習し、
@@ -2406,14 +2469,18 @@ class HorseRacingAnalyzerApp:
         # --- 必要なライブラリをインポート ---
         # (ファイル冒頭でインポート済みなら不要だが、念のため)
         try:
-            import lightgbm as lgb
-            from sklearn.model_selection import train_test_split
-            from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, confusion_matrix
-            import pandas as pd
+            import lightgbm as lgb # type: ignore
+            from sklearn.model_selection import train_test_split # type: ignore # type: ignore
+            from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, confusion_matrix # type: ignore
+            import pandas as pd # type: ignore # type: ignore
             import traceback
             from tkinter import messagebox
+            # ★↓ キャリブレーションプロット作成のために以下3行を追加しました
+            from sklearn.calibration import calibration_curve # type: ignore
+            import matplotlib.pyplot as plt # type: ignore
+            import os # ファイルパスの操作用にosモジュールをインポート
         except ImportError as e:
-            messagebox.showerror("ライブラリ不足", f"必要なライブラリが見つかりません: {e}\npip install lightgbm scikit-learn でインストールしてください。")
+            messagebox.showerror("ライブラリ不足", f"必要なライブラリが見つかりません: {e}\npip install lightgbm scikit-learn matplotlib でインストールしてください。")
             return
         # --- ここまでインポート ---
 
@@ -2422,7 +2489,7 @@ class HorseRacingAnalyzerApp:
 
         # 1. 学習データの準備
         # (このメソッドは DataFrame X と Series y を返す)
-        X, y = self._prepare_data_for_model()
+        X, y = self._prepare_data_for_model() # ユーザーさん定義のデータ準備メソッド
 
         if X is None or y is None or X.empty or y.empty:
             print("エラー: モデル学習に必要なデータが準備できませんでした。")
@@ -2467,7 +2534,7 @@ class HorseRacingAnalyzerApp:
             self.trained_model = lgb_clf
             print("学習済みモデルを self.trained_model に保存しました。")
             
-            self.save_model_to_file()
+            self.save_model_to_file() # ユーザーさん定義のモデル保存メソッド
 
         except Exception as e_fit:
             print(f"!!! ERROR during model training: {e_fit}")
@@ -2513,6 +2580,39 @@ class HorseRacingAnalyzerApp:
             print(f"  Recall (Threshold 0.5): {recall:.4f}")
             print(f"  Confusion Matrix (Threshold 0.5):\n{conf_matrix}")
 
+            # --- ★ここからキャリブレーションプロットの描画コードを追加しました ---
+            print("キャリブレーションプロットを作成します...")
+            self.root.after(0, lambda: self.update_status("キャリブレーションプロット作成中..."))
+            try:
+                # calibration_curveの計算
+                prob_true, prob_pred = calibration_curve(y_test, y_pred_proba, n_bins=10, strategy='uniform')
+
+                # プロットの作成
+                plt.figure(figsize=(8, 6))
+                plt.plot(prob_pred, prob_true, marker='o', linewidth=1, label='LightGBM (本モデル)')
+                plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='理想的なキャリブレーション')
+
+                plt.xlabel("予測確率の区間平均 (Mean predicted probability)")
+                plt.ylabel("実際の3着内率 (Fraction of positives)")
+                plt.title("キャリブレーションプロット (Calibration Plot)")
+                plt.legend(loc='lower right')
+                plt.grid(True)
+                
+                plot_filename = "calibration_plot.png"
+                # スクリプトを実行しているカレントワーキングディレクトリに保存
+                plot_filepath = os.path.join(os.getcwd(), plot_filename) 
+
+                plt.savefig(plot_filepath)
+                print(f"キャリブレーションプロットを {plot_filepath} に保存しました。")
+                self.root.after(0, lambda f_path=plot_filepath: self.update_status(f"プロット保存: {os.path.basename(f_path)}"))
+                plt.close() # GUI環境でのフリーズを避けるため、表示せずに閉じる
+
+            except Exception as e_calib_plot:
+                print(f"!!! ERROR during calibration plot creation: {e_calib_plot}")
+                traceback.print_exc()
+                self.root.after(0, lambda: self.update_status("エラー: プロット作成失敗"))
+            # --- ★キャリブレーションプロットの描画コードここまで ---
+
             # 結果をメッセージボックスで表示
             eval_result_text = f"モデル評価結果 (テストデータ):\n" \
                                f"AUC Score: {auc:.4f}\n" \
@@ -2521,7 +2621,8 @@ class HorseRacingAnalyzerApp:
                                f"Precision (適合率): {precision:.4f}\n" \
                                f"Recall (再現率): {recall:.4f}\n" \
                                f"\nConfusion Matrix:\n{conf_matrix}\n" \
-                               f"(行: 実際の0/1, 列: 予測の0/1)"
+                               f"(行: 実際の0/1, 列: 予測の0/1)\n\n" \
+                               f"キャリブレーションプロットが calibration_plot.png として保存されました。" # ★メッセージに追記
 
             self.root.after(0, lambda text=eval_result_text: messagebox.showinfo("モデル評価結果", text)) # GUI更新
             self.root.after(0, lambda: self.update_status("モデル評価完了")) # GUI更新
@@ -2534,7 +2635,7 @@ class HorseRacingAnalyzerApp:
 
         print("--- Model Training and Evaluation Finished ---")
     # --- ここまでモデル学習・評価メソッド ---
-
+    
     def format_shutuba_data(self,shutuba_table_list, race_id):
         """self.get_shutuba_tableの結果をDataFrameに整形"""
         if not shutuba_table_list or len(shutuba_table_list) < 2:
@@ -3298,12 +3399,12 @@ class HorseRacingAnalyzerApp:
     def load_local_files(self, csv_path, json_path=None):
         """ローカルのCSVとJSONファイルを読み込み、統計計算を実行し、データを格納する"""
         # ★ 必要なライブラリ (pandas, os, json, tkinter) はファイル冒頭で import されている前提
-        import pandas as pd
+        import pandas as pd # type: ignore
         import os
         import json
         from tkinter import messagebox
         import traceback # エラー詳細表示用にインポート
-        import numpy as np # pd.NA を使う場合や型チェックで必要なら
+        import numpy as np # type: ignore # pd.NA を使う場合や型チェックで必要なら
 
         df_combined = None
         payout_data = []
@@ -4243,8 +4344,8 @@ class HorseRacingAnalyzerApp:
     def _run_analysis_thread(self, analysis_type, filters):
         """分析の非同期処理（人気別、距離別、コース種別、血統分析を追加）"""
         import time
-        import pandas as pd
-        import numpy as np
+        import pandas as pd # type: ignore
+        import numpy as np # type: ignore
         # import matplotlib.pyplot as plt # テーブル表示のみなら不要かも
         import traceback
 
@@ -4513,8 +4614,8 @@ class HorseRacingAnalyzerApp:
         # --- 必要なライブラリをインポート ---
         # (ファイル冒頭でインポート済みなら不要だが、念のため)
         import time
-        import pandas as pd
-        import numpy as np
+        import pandas as pd # type: ignore # type: ignore
+        import numpy as np # type: ignore
         import traceback
         import re
         from tkinter import messagebox
@@ -5052,9 +5153,9 @@ class HorseRacingAnalyzerApp:
     def _run_result_analysis_thread(self, start_dt, end_dt, bet_types_to_run, analysis_type):
         """結果分析（バックテスト）の非同期処理（完全版・省略なし）"""
         import time
-        import pandas as pd
-        import numpy as np
-        import matplotlib.pyplot as plt # グラフ表示用に必要
+        import pandas as pd # type: ignore
+        import numpy as np # type: ignore
+        import matplotlib.pyplot as plt # type: ignore # グラフ表示用に必要
         import traceback
 
         # この関数内の try...except は、予期せぬエラー全体を捕捉するためのもの
