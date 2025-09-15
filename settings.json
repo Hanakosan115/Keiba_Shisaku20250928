@@ -1,0 +1,8 @@
+{
+    "data_directory": "C:\\Users\\bu158\\\u8a66\u4f5c\\data",
+    "model_directory": "C:\\Users\\bu158\\\u8a66\u4f5c\\models",
+    "min_odds": 1.5,
+    "max_odds": 50.0,
+    "min_expected_value": 1.0,
+    "kelly_fraction": 0.1
+}
