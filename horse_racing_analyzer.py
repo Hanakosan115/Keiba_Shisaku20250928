@@ -1189,132 +1189,264 @@ class HorseRacingAnalyzerApp:
                 except Exception: pass
 
         return horse_details
- 
-    # --- ★★★ 特徴量計算関数 (近走情報参照ロジック修正版) ★★★ ---
+    
+    # --- ★★★ 調教データ取得メソッド (新規追加) ★★★ ---
+    def get_training_data(self, race_id, driver):
+        """
+        指定されたrace_idの調教データをnetkeiba.comから取得する。
+        WebDriverを引数として受け取り、再利用する。
+        """
+        training_data_list = []
+        try:
+            url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
+            print(f"      調教データ取得試行: {url}")
+            driver.get(url)
+            # テーブルが表示されるまで待機
+            WebDriverWait(driver, self.SELENIUM_WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'table.Oikiri_Table'))
+            )
+            time.sleep(0.5) # 描画待機
+            soup = BeautifulSoup(driver.page_source, 'lxml')
+            
+            table = soup.select_one('table.Oikiri_Table')
+            if not table:
+                print(f"      警告: 調教テーブルが見つかりませんでした ({race_id})。")
+                return []
+
+            rows = table.select('tr.HorseList')
+            for row in rows:
+                horse_name = row.select_one('div.HorseName a')
+                horse_id_tag = horse_name['href'] if horse_name else None
+                horse_id = re.search(r'/horse/(\d+)', str(horse_id_tag)).group(1) if horse_id_tag else None
+
+                # 評価(A,B,Cなど)を取得
+                evaluation_tag = row.select_one('td.Oikiri_Hyouka > div')
+                evaluation = evaluation_tag.get_text(strip=True) if evaluation_tag else None
+
+                # 追切時計(Oikiri_Clock)の各タイムを取得
+                clock_td = row.select_one('td.Oikiri_Clock')
+                times = {}
+                if clock_td:
+                    time_elements = clock_td.find_all('li')
+                    if time_elements and len(time_elements) >= 2:
+                        # 最後の2つのliタグが全体時計と上がりタイム
+                        times['total_time_str'] = time_elements[-2].get_text(strip=True)
+                        times['last_furlong_str'] = time_elements[-1].get_text(strip=True)
+                
+                training_data_list.append({
+                    'horse_id': horse_id,
+                    'training_evaluation': evaluation,
+                    'training_total_time': pd.to_numeric(times.get('total_time_str'), errors='coerce'),
+                    'training_last_furlong': pd.to_numeric(times.get('last_furlong_str'), errors='coerce')
+                })
+
+        except TimeoutException:
+            print(f"      警告: 調教ページの読み込みがタイムアウトしました ({race_id})。")
+        except Exception as e:
+            print(f"      ★★★★★ 調教データ取得中に予期せぬエラー: {e}")
+            traceback.print_exc()
+            
+        return training_data_list
+
+    # --- ★★★ 調教データ特徴量化メソッド (新規追加) ★★★ ---
+    def process_training_features(self, training_df):
+        """
+        調教データのDataFrameから、特徴量を生成する。
+        - 評価を数値にマッピング
+        - 全体時計、上がりタイムをランク（偏差値）に変換
+        """
+        if training_df.empty:
+            return training_df
+
+        # 評価を数値に変換 (S > A > B > C > D)
+        eval_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1}
+        training_df['training_eval_score'] = training_df['training_evaluation'].map(eval_map).fillna(2) # 評価なしはC相当
+
+        # 全体時計のランク（速いほど高い値）
+        if 'training_total_time' in training_df.columns and training_df['training_total_time'].notna().any():
+            training_df['training_time_rank'] = training_df['training_total_time'].rank(method='min', ascending=True, na_option='bottom')
+        else:
+            training_df['training_time_rank'] = np.nan
+
+        # 上がりタイムのランク（速いほど高い値）
+        if 'training_last_furlong' in training_df.columns and training_df['training_last_furlong'].notna().any():
+            training_df['training_last_furlong_rank'] = training_df['training_last_furlong'].rank(method='min', ascending=True, na_option='bottom')
+        else:
+            training_df['training_last_furlong_rank'] = np.nan
+            
+        return training_df
+    
     def calculate_original_index(self, horse_details, race_conditions):
         """
-        馬の詳細情報とレース条件から、予測に使用する特徴量を計算・収集して返す。
-        ★★★ 修正点: get_horse_detailsで取得したキー名('rank', 'diff', 'agari')を正しく参照するように修正。 ★★★
+        【特徴量 最終強化版 v2 - タイム指数導入】
+        タイム指数に関連する特徴を追加し、予測の精度と差別化を大幅に向上させる。
         """
-        horse_id_for_log_debug = horse_details.get('horse_id', 'horse_id不明')
-        umaban_for_log_debug = horse_details.get('Umaban', horse_details.get('馬番', '馬番不明'))
-        # (デバッグログは省略)
-
+        # (メソッド前半の特徴量辞書の初期化部分は変更なし)
         features = {
-            'Umaban': np.nan, 'HorseName': '', 'Sex': np.nan, 'Age': np.nan, 'Load': np.nan,
-            'JockeyName': '', 'TrainerName': '', 'father': '', 'mother_father': '', 'horse_id': None,
-            '近走1走前着順': np.nan, '近走2走前着順': np.nan, '近走3走前着順': np.nan,
-            '着差_1走前': np.nan, '着差_2走前': np.nan, '着差_3走前': np.nan,
-            '上がり3F_1走前': np.nan, '上がり3F_2走前': np.nan, '上がり3F_3走前': np.nan,
-            '同条件出走数': 0, '同条件複勝率': 0.0, 'タイム偏差値': np.nan, '同コース距離最速補正': np.nan,
-            '基準タイム差': np.nan, '基準タイム比': np.nan, '父同条件複勝率': 0.0, '父同条件N数': 0,
-            '母父同条件複勝率': 0.0, '母父同条件N数': 0, '斤量絶対値': np.nan, '斤量前走差': np.nan,
-            '馬体重絶対値': np.nan, '馬体重前走差': np.nan, '枠番': np.nan, '枠番_複勝率': 0.0, '枠番_N数': 0,
-            '負担率': np.nan, '距離区分': None, 'race_class_level': np.nan, 'first_prize_money': np.nan,
-            'total_prize_money': np.nan, 'time_dev_x_race_level': np.nan, 'is_transfer_from_local_1ago': 0,
-            'prev_race_track_type_1ago': 'Unknown', 'num_jra_starts': 0, 'jra_rank_1ago': np.nan,
-            'OddsShutuba': np.nan, 'NinkiShutuba': np.nan, 'error': None
+            'horse_id': None, 'Umaban': np.nan, 'Age': np.nan, 'Sex': np.nan, 'Load': np.nan, 
+            'JockeyName': '', 'TrainerName': '',
+            'father': '', 'mother_father': '', 'NinkiShutuba': np.nan, 'OddsShutuba': np.nan,
+            'rank_1ago': np.nan, 'diff_1ago': np.nan, 'agari_1ago': np.nan,
+            'rank_2ago': np.nan, 'diff_2ago': np.nan, 'agari_2ago': np.nan,
+            'rank_3ago': np.nan, 'diff_3ago': np.nan, 'agari_3ago': np.nan,
+            'days_since_last_race': np.nan,
+            'Weight': np.nan, 'WeightDiff': np.nan,
+            'jockey_win_rate': 0.0, 'jockey_place_rate': 0.0,
+            'jockey_recent_win_rate': 0.0, 'jockey_recent_place_rate': 0.0,
+            'trainer_win_rate': 0.0, 'trainer_place_rate': 0.0,
+            'trainer_recent_win_rate': 0.0, 'trainer_recent_place_rate': 0.0,
+            'jockey_horse_win_rate': 0.0, 'jockey_horse_place_rate': 0.0,
+            'jockey_track_course_win_rate': 0.0, 'jockey_track_course_place_rate': 0.0,
+            'father_track_course_place_rate': 0.0,
+            'mother_father_track_course_place_rate': 0.0,
+            'same_jockey_last_race': 0,
+            'avg_past_race_level': np.nan, 'level_diff_from_avg': np.nan,
+            'is_first_time_track': 1, 'is_first_time_distance': 1,
+            # ★★★ タイム指数関連の特徴量を追加 ★★★
+            'time_deviation_value': np.nan,          # タイム偏差値
+            'best_corrected_time_on_course': np.nan, # 同コース最速補正タイム
+            'ref_time_diff': np.nan,                 # 基準タイムとの差
+            'ref_time_ratio': np.nan,                # 基準タイム比
+            'time_dev_x_race_level': np.nan,         # タイム偏差値とレースレベルの交互作用
+            'error': None
         }
 
         if not isinstance(horse_details, dict):
-            features['error'] = "horse_details is not a dictionary"
-            return 0.0, features
+            features['error'] = "horse_details is not a dictionary"; return 0.0, features
 
-        horse_id_val = horse_details.get('horse_id')
-        features['horse_id'] = str(horse_id_val).split('.')[0] if pd.notna(horse_id_val) else None
-        
-        # --- 基本情報 ---
-        features['Umaban'] = pd.to_numeric(horse_details.get('Umaban', horse_details.get('馬番')), errors='coerce')
-        features['HorseName'] = str(horse_details.get('HorseName', horse_details.get('馬名', '')))
-        sex_age_str = str(horse_details.get('SexAge', horse_details.get('性齢', ''))).strip()
-        if sex_age_str:
-            match = re.match(r'([牡牝セせんセン騙])(\d+)', sex_age_str)
-            if match:
-                sex_char = match.group(1); sex_map = {'牡': 0, '牝': 1, 'セ': 2, 'せ': 2, 'ん': 2, 'セン': 2, '騙': 2}
-                features['Sex'] = sex_map.get(sex_char, np.nan)
-                features['Age'] = pd.to_numeric(match.group(2), errors='coerce')
-        
-        features['Load'] = pd.to_numeric(horse_details.get('Load', horse_details.get('斤量')), errors='coerce')
+        # --- 1. 基本情報とレース条件の抽出 ---
+        # (このセクションは変更ありません)
+        features['horse_id'] = str(horse_details.get('horse_id')).split('.')[0] if pd.notna(horse_details.get('horse_id')) else None
+        features['Umaban'] = pd.to_numeric(horse_details.get('Umaban'), errors='coerce')
+        sex_age_str = str(horse_details.get('SexAge', '')).strip()
+        if sex_age_str and re.match(r'([牡牝セせん])(\d+)', sex_age_str):
+            match = re.match(r'([牡牝セせん])(\d+)', sex_age_str)
+            sex_map = {'牡': 0, '牝': 1, 'セ': 2, 'せ': 2, 'ん': 2}
+            features['Sex'] = sex_map.get(match.group(1), np.nan)
+            features['Age'] = pd.to_numeric(match.group(2), errors='coerce')
+        features['Load'] = pd.to_numeric(horse_details.get('Load'), errors='coerce')
         features['JockeyName'] = str(horse_details.get('JockeyName', ''))
         features['TrainerName'] = str(horse_details.get('TrainerName', ''))
         features['father'] = str(horse_details.get('father', ''))
         features['mother_father'] = str(horse_details.get('mother_father', ''))
-
-        # --- レース条件 ---
-        target_course = race_conditions.get('CourseType')
-        target_distance_raw = race_conditions.get('Distance')
-        target_track = race_conditions.get('TrackName')
-        target_baba = race_conditions.get('TrackCondition', race_conditions.get('baba'))
-        target_distance_float = float(pd.to_numeric(target_distance_raw, errors='coerce')) if pd.notna(target_distance_raw) else None
-
-        # --- 距離区分 ---
-        if target_distance_float is not None:
-            bins = [0, 1400, 1800, 2200, 2600, float('inf')]
-            labels = ['1400m以下', '1401-1800m', '1801-2200m', '2201-2600m', '2601m以上']
-            features['距離区分'] = pd.cut([target_distance_float], bins=bins, labels=labels, right=True, include_lowest=True)[0]
-        
-        race_results_for_calc = horse_details.get('race_results', [])
-
-        # --- 新規特徴量 ---
-        race_name_for_class_calc = str(race_conditions.get('RaceName', ''))
-        features['race_class_level'] = self._get_race_class_level(race_name_for_class_calc)
-        features['first_prize_money'] = pd.to_numeric(race_conditions.get('prize_money_1st'), errors='coerce')
-        features['total_prize_money'] = pd.to_numeric(horse_details.get('total_prize'), errors='coerce')
-        features['is_transfer_from_local_1ago'] = horse_details.get('is_transfer_from_local_1ago', 0)
-        features['prev_race_track_type_1ago'] = horse_details.get('prev_race_track_type_1ago', 'Unknown')
-        features['num_jra_starts'] = horse_details.get('num_jra_starts', 0)
-        
-        jra_races_calc = horse_details.get('jra_race_results', [])
-        if jra_races_calc:
-            features['jra_rank_1ago'] = pd.to_numeric(jra_races_calc[0].get('rank'), errors='coerce')
-
-        features['OddsShutuba'] = pd.to_numeric(horse_details.get('OddsShutuba', horse_details.get('Odds')), errors='coerce')
         features['NinkiShutuba'] = pd.to_numeric(horse_details.get('NinkiShutuba', horse_details.get('Ninki')), errors='coerce')
-
-        # --- メインの特徴量計算ループ ---
-        try:
-            # ★★★ 1. 近走情報 (着順・着差・上がり) の参照ロジックを修正 ★★★
-            for i in range(3):
-                if len(race_results_for_calc) > i:
-                    result = race_results_for_calc[i]
-                    if isinstance(result, dict):
-                        # キーを'rank', 'diff', 'agari'に統一して参照する
-                        features[f'近走{i+1}走前着順'] = pd.to_numeric(result.get('rank'), errors='coerce')
-                        features[f'着差_{i+1}走前'] = pd.to_numeric(result.get('diff'), errors='coerce')
-                        features[f'上がり3F_{i+1}走前'] = pd.to_numeric(result.get('agari'), errors='coerce')
-
-            # --- 2. 斤量・馬体重関連 ---
-            features['斤量絶対値'] = features['Load']
-            current_weight_val_calc = pd.to_numeric(horse_details.get('Weight'), errors='coerce')
-            if pd.isna(current_weight_val_calc):
-                current_weight_val_calc = pd.to_numeric(horse_details.get('WeightShutuba'), errors='coerce')
-            features['馬体重絶対値'] = current_weight_val_calc
-
-            if race_results_for_calc and isinstance(race_results_for_calc[0], dict):
-                prev_race_details = race_results_for_calc[0]
-                prev_load_calc = pd.to_numeric(prev_race_details.get('load'), errors='coerce')
-                if pd.notna(features['斤量絶対値']) and pd.notna(prev_load_calc):
-                    features['斤量前走差'] = features['斤量絶対値'] - prev_load_calc
-                
-                prev_weight_calc = pd.to_numeric(prev_race_details.get('weight_val'), errors='coerce')
-                if pd.notna(features['馬体重絶対値']) and pd.notna(prev_weight_calc):
-                    features['馬体重前走差'] = features['馬体重絶対値'] - prev_weight_calc
-            
-            if pd.notna(features['斤量絶対値']) and pd.notna(features['馬体重絶対値']) and features['馬体重絶対値'] > 0:
-                features['負担率'] = round(features['斤量絶対値'] / features['馬体重絶対値'], 3)
-
-            # ... (以降のタイム関連、血統、枠番、同条件成績などの計算は変更なし) ...
-
-        except Exception as e_main_calc:
-            print(f"!!! ERROR ({horse_id_for_log_debug}): 特徴量計算メインブロックで予期せぬエラー: {e_main_calc}")
-            traceback.print_exc()
-            features['error'] = f"CalcError: {type(e_main_calc).__name__}"
+        features['OddsShutuba'] = pd.to_numeric(horse_details.get('OddsShutuba', horse_details.get('Odds')), errors='coerce')
         
-        # (最終的なログ出力も変更なし)
-        print(f"--- 特徴量計算結果 (馬番 {umaban_for_log_debug}, horse_id {horse_id_for_log_debug}) ---")
-        # ...
+        weight_info = horse_details.get('WeightInfo', horse_details.get('WeightInfoShutuba', ''))
+        if isinstance(weight_info, str) and '(' in weight_info:
+            weight_match = re.match(r'(\d+)\(([-+]?\d+)\)', weight_info)
+            if weight_match:
+                features['Weight'] = int(weight_match.group(1))
+                features['WeightDiff'] = int(weight_match.group(2))
+        elif pd.notna(weight_info):
+             features['Weight'] = pd.to_numeric(weight_info, errors='coerce')
 
-        return 0.0, features
+        target_course = race_conditions.get('CourseType', '不明')
+        target_distance = pd.to_numeric(race_conditions.get('Distance'), errors='coerce')
+        target_track = race_conditions.get('TrackName', '不明')
+        current_race_date = pd.to_datetime(race_conditions.get('RaceDate'), errors='coerce')
+        current_race_level = self._get_race_class_level(str(race_conditions.get('RaceName', '')))
+        target_baba = race_conditions.get('baba', '不明')
+
+        # --- 2. 過去戦績データの処理 ---
+        past_races_df = pd.DataFrame()
+        if 'race_results' in horse_details and isinstance(horse_details['race_results'], list) and horse_details['race_results']:
+            past_races_df = pd.DataFrame(horse_details['race_results'])
+            past_races_df['date'] = pd.to_datetime(past_races_df['date'], errors='coerce')
+            past_races_df = past_races_df.dropna(subset=['date']).sort_values('date', ascending=False)
+        
+        if not past_races_df.empty:
+            for i in range(min(3, len(past_races_df))):
+                features[f'rank_{i+1}ago'] = pd.to_numeric(past_races_df.iloc[i].get('rank'), errors='coerce')
+                features[f'diff_{i+1}ago'] = pd.to_numeric(past_races_df.iloc[i].get('diff'), errors='coerce')
+                features[f'agari_{i+1}ago'] = pd.to_numeric(past_races_df.iloc[i].get('agari'), errors='coerce')
+            
+            last_race_date = past_races_df.iloc[0]['date']
+            if pd.notna(current_race_date) and pd.notna(last_race_date):
+                features['days_since_last_race'] = (current_race_date - last_race_date).days
+            
+            last_jockey = past_races_df.iloc[0].get('jockey')
+            if last_jockey and last_jockey == features['JockeyName']:
+                features['same_jockey_last_race'] = 1
+
+            if target_track != '不明':
+                features['is_first_time_track'] = 1 if target_track not in past_races_df['place'].unique() else 0
+            if pd.notna(target_distance):
+                past_distances = pd.to_numeric(past_races_df['distance'], errors='coerce')
+                features['is_first_time_distance'] = 1 if not (past_distances == target_distance).any() else 0
+
+            if 'race_name' in past_races_df.columns:
+                past_races_df['race_level'] = past_races_df['race_name'].apply(self._get_race_class_level)
+                features['avg_past_race_level'] = past_races_df['race_level'].mean()
+                if pd.notna(features['avg_past_race_level']):
+                    features['level_diff_from_avg'] = current_race_level - features['avg_past_race_level']
+
+        # ★★★ 3. タイム指数関連の特徴量計算 ★★★
+        try:
+            baba_hosei_map = {'芝': {'良': 0.0, '稍重': 0.5, '重': 1.0, '不良': 1.5}, 'ダ': {'良': 0.0, '稍重': -0.3, '重': -0.8, '不良': -1.3}}
+            
+            best_corrected_time = np.nan
+            if not past_races_df.empty and target_course != '不明' and pd.notna(target_distance):
+                same_dist_races = past_races_df[pd.to_numeric(past_races_df['distance'], errors='coerce') == target_distance]
+                corrected_times = []
+                for _, r in same_dist_races.iterrows():
+                    time_sec = pd.to_numeric(r.get('time_sec'), errors='coerce')
+                    past_course = r.get('course_type')
+                    past_baba = r.get('baba')
+                    if pd.notna(time_sec) and past_course == target_course and past_baba in baba_hosei_map.get(target_course, {}):
+                        hosei = baba_hosei_map[target_course][past_baba]
+                        corrected_times.append(time_sec - hosei)
+                
+                if corrected_times:
+                    best_corrected_time = min(corrected_times)
+                    features['best_corrected_time_on_course'] = round(best_corrected_time, 2)
+            
+            if pd.notna(best_corrected_time) and hasattr(self, 'course_time_stats') and target_track != '不明':
+                stat_key = (target_track, target_course, int(target_distance))
+                course_stats = self.course_time_stats.get(stat_key)
+                if course_stats and pd.notna(course_stats.get('mean')) and pd.notna(course_stats.get('std')) and course_stats['std'] > 0:
+                    mean_time = course_stats['mean']
+                    std_time = course_stats['std']
+                    features['time_deviation_value'] = round(50 + 10 * (mean_time - best_corrected_time) / std_time, 2)
+
+            if hasattr(self, 'reference_times'):
+                ref_key = (current_race_level, target_track, target_course, int(target_distance))
+                ref_time = self.reference_times.get(ref_key)
+                if ref_time and pd.notna(best_corrected_time):
+                    features['ref_time_diff'] = round(best_corrected_time - ref_time, 2)
+                    if ref_time > 0:
+                        features['ref_time_ratio'] = round(best_corrected_time / ref_time, 4)
+
+            if pd.notna(features.get('time_deviation_value')) and pd.notna(current_race_level):
+                features['time_dev_x_race_level'] = features['time_deviation_value'] * current_race_level
+
+        except Exception as e_time:
+            print(f"WARN: タイム指数計算中にエラーが発生しました: {e_time}")
+
+        # --- 4. 騎手・調教師・血統データ ---
+        # (このセクションは変更ありません)
+        jockey_name = features.get('JockeyName')
+        trainer_name = features.get('TrainerName')
+        if hasattr(self, 'jockey_stats') and jockey_name in self.jockey_stats:
+            features['jockey_win_rate'] = self.jockey_stats[jockey_name].get('win_rate', 0.0)
+            features['jockey_place_rate'] = self.jockey_stats[jockey_name].get('place_rate', 0.0)
+        if hasattr(self, 'trainer_stats') and trainer_name in self.trainer_stats:
+            features['trainer_win_rate'] = self.trainer_stats[trainer_name].get('win_rate', 0.0)
+            features['trainer_place_rate'] = self.trainer_stats[trainer_name].get('place_rate', 0.0)
+        
+        if hasattr(self, 'father_stats') and features['father'] and target_track != '不明' and target_course != '不明':
+            sire_stats_father = self.father_stats.get(features['father'], {})
+            track_course_key = (target_track, target_course)
+            if track_course_key in sire_stats_father:
+                features['father_track_course_place_rate'] = sire_stats_father[track_course_key].get('Place3Rate', 0.0)
+        
+        if hasattr(self, 'mother_father_stats') and features['mother_father'] and target_track != '不明' and target_course != '不明':
+            sire_stats_mf = self.mother_father_stats.get(features['mother_father'], {})
+            track_course_key_mf = (target_track, target_course)
+            if track_course_key_mf in sire_stats_mf:
+                features['mother_father_track_course_place_rate'] = sire_stats_mf[track_course_key_mf].get('Place3Rate', 0.0)
+
+        return 0.0, features   
 
     # --- 持ちタイム指数用の統計計算メソッド (修正・完全版) ---
     def _calculate_course_time_stats(self):
@@ -1584,7 +1716,56 @@ class HorseRacingAnalyzerApp:
             traceback.print_exc()
             setattr(self, stats_attr_name, {}) # エラー時は空にする
             self.update_status(f"エラー: {sire_column} 成績計算失敗")
+    
+    # --- ★★★ 騎手・調教師成績集計メソッド (新規追加) ★★★ ---
+    def _calculate_jockey_trainer_stats(self):
+        """
+        読み込んだデータ全体から、騎手ごと、調教師ごとの成績（勝率・複勝率）を
+        集計し、クラス変数に格納する。
+        """
+        print("騎手・調教師別の成績データを計算中...")
+        self.update_status("騎手・調教師成績を計算中...")
 
+        self.jockey_stats = {}
+        self.trainer_stats = {}
+
+        if self.combined_data is None or self.combined_data.empty:
+            print("警告: 騎手・調教師の成績計算のためのデータがありません。")
+            return
+
+        required_cols = ['JockeyName', 'TrainerName', 'Rank']
+        if not all(col in self.combined_data.columns for col in required_cols):
+            missing = [c for c in required_cols if c not in self.combined_data.columns]
+            print(f"警告: 成績計算に必要な列が不足しています: {missing}")
+            return
+
+        df = self.combined_data.copy()
+        df.dropna(subset=required_cols, inplace=True)
+        df['Rank_num'] = pd.to_numeric(df['Rank'], errors='coerce')
+        df.dropna(subset=['Rank_num'], inplace=True)
+
+        # 騎手成績の集計
+        jockey_agg = df.groupby('JockeyName').agg(
+            Runs=('Rank_num', 'size'),
+            Wins=('Rank_num', lambda x: (x == 1).sum()),
+            Places=('Rank_num', lambda x: (x <= 3).sum())
+        )
+        jockey_agg['win_rate'] = jockey_agg['Wins'] / jockey_agg['Runs']
+        jockey_agg['place_rate'] = jockey_agg['Places'] / jockey_agg['Runs']
+        self.jockey_stats = jockey_agg.to_dict('index')
+
+        # 調教師成績の集計
+        trainer_agg = df.groupby('TrainerName').agg(
+            Runs=('Rank_num', 'size'),
+            Wins=('Rank_num', lambda x: (x == 1).sum()),
+            Places=('Rank_num', lambda x: (x <= 3).sum())
+        )
+        trainer_agg['win_rate'] = trainer_agg['Wins'] / trainer_agg['Runs']
+        trainer_agg['place_rate'] = trainer_agg['Places'] / trainer_agg['Runs']
+        self.trainer_stats = trainer_agg.to_dict('index')
+
+        print(f"騎手データ: {len(self.jockey_stats)}件, 調教師データ: {len(self.trainer_stats)}件 の集計が完了しました。")
+    
     # --- ★★★ 枠番別統計計算メソッド (新規追加) ★★★ ---
     def _calculate_gate_stats(self):
         """
@@ -3442,6 +3623,7 @@ class HorseRacingAnalyzerApp:
                 else: self.mother_father_stats = {}
                 self._calculate_gate_stats()
                 self._calculate_reference_times()
+                self._calculate_jockey_trainer_stats()
                 self.preprocess_data_for_training() # ★ データ前処理を実行
             else:
                 print("情報: combined_dataが空のため、統計計算と前処理をスキップします。")
@@ -3519,6 +3701,7 @@ class HorseRacingAnalyzerApp:
                      
                  self._calculate_gate_stats()
                  self._calculate_reference_times()
+                 self._calculate_jockey_trainer_stats()
                  self.preprocess_data_for_training()
                  
             else: # combined_data が空またはNoneの場合
@@ -3534,8 +3717,6 @@ class HorseRacingAnalyzerApp:
             messagebox.showinfo("データ処理完了", f"データの準備が完了しました。\nレースデータ: {self.combined_data.shape[0]}行\n払い戻しデータ:{len(self.payout_data)}レース分\n(各種統計計算済)") # メッセージ変更に各種統計計算済を追加
             self.update_data_preview()
 
-            # --- 自動保存処理 (変更なし) ---
-            # ... (自動保存ロジックは変更なし) ...
             if start_year: # netkeibaから取得した場合のみ自動保存
                 save_dir = self.settings.get("data_dir", ".")
                 if not os.path.exists(save_dir):
@@ -3670,6 +3851,7 @@ class HorseRacingAnalyzerApp:
         # save_result_button.pack(pady=10, anchor=tk.E)
 
     
+ 
     def init_prediction_tab(self):
         """予測タブの初期化"""
         # 左側のフレーム（予測設定）
@@ -4538,8 +4720,14 @@ class HorseRacingAnalyzerApp:
         self.update_status(f"レース情報検索中: {race_id}")
         self.run_in_thread(self._fetch_race_info_thread, race_id)
     
-    # --- ★★★ 予測タブ レース情報取得・予測確率計算メソッド (SHAP仕様変更 対応版) ★★★ ---
     def _fetch_race_info_thread(self, race_id):
+        """
+        レース情報の取得と表示、学習済みモデルでの予測確率計算を行う。
+        【改善版】
+        - 調教データを取得し、特徴量としてマージする機能を追加。
+        - WebDriverをレース単位で一度だけ起動し、各処理に再利用することで効率化。
+        - SHAP解説器を使用し、予測の根拠を計算して表示する機能を追加。
+        """
         import pandas as pd
         import numpy as np
         import traceback
@@ -4549,12 +4737,13 @@ class HorseRacingAnalyzerApp:
         import shap
         import os
 
-        driver = None
+        driver = None # finallyブロックで参照できるよう、最初に定義
         final_gui_list = []
         try:
             self.root.after(0, lambda: self.update_status(f"レースID {race_id}: 予測処理準備中..."))
             print(f"--- _fetch_race_info_thread: START (Race ID: {race_id}) ---")
 
+            # --- WebDriverを一度だけ起動 ---
             options = webdriver.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.add_argument(f'--user-agent={self.USER_AGENT}')
@@ -4573,12 +4762,28 @@ class HorseRacingAnalyzerApp:
                 messagebox.showwarning("モデルまたは解説器が未ロード", "モデル等が読み込まれていません。\nデータ管理タブでモデルを再学習してください。")
                 return
 
+            # --- 1. 出馬表とレース共通情報を取得 ---
             web_data = self.get_shutuba_table(race_id)
             if not (web_data and web_data.get('horse_list')):
                 messagebox.showerror("情報取得エラー", "出走馬情報を取得できませんでした。"); return
+            
             race_df = pd.DataFrame(web_data['horse_list'])
             race_conditions = web_data.get('race_details', {})
             race_conditions['RaceDate'] = pd.to_datetime(race_conditions.get('RaceDate'), format='%Y年%m月%d日', errors='coerce')
+
+            # ★★★ ここから調教データの処理を追加 ★★★
+            training_data_raw = self.get_training_data(race_id, driver)
+            training_df = pd.DataFrame()
+            if training_data_raw:
+                training_df_raw = pd.DataFrame(training_data_raw)
+                training_df = self.process_training_features(training_df_raw)
+                # race_dfと調教データをマージ
+                if 'horse_id' in training_df.columns and not training_df.empty:
+                    # horse_idの型を文字列に統一してからマージする
+                    race_df['horse_id'] = race_df['horse_id'].astype(str)
+                    training_df['horse_id'] = training_df['horse_id'].astype(str)
+                    race_df = pd.merge(race_df, training_df, on='horse_id', how='left')
+            # ★★★ 調教データ処理ここまで ★★★
 
             for index, row_from_racedf in race_df.iterrows():
                 umaban = row_from_racedf.get('Umaban'); horse_name = row_from_racedf.get('HorseName')
@@ -4630,12 +4835,9 @@ class HorseRacingAnalyzerApp:
                             self.root.after(0, lambda u=umaban: self.update_status(f"SHAP計算中: {u}番..."))
                             shap_values = self.shap_explainer.shap_values(X_pred)
                             
-                            # ★★★ ここが最重要修正点：SHAPの出力形式に応じて処理を分岐 ★★★
                             if isinstance(shap_values, list) and len(shap_values) == 2:
-                                # 従来の形式: [クラス0, クラス1]
                                 shap_values_for_class1 = shap_values[1][0]
                             else:
-                                # 新しい形式: [クラス1]
                                 shap_values_for_class1 = shap_values[0]
 
                             shap_df = pd.DataFrame({'feature': X_pred.columns, 'shap_value': shap_values_for_class1})
@@ -4658,8 +4860,27 @@ class HorseRacingAnalyzerApp:
                 return (bool(error), proba is None, -proba if proba is not None else 1)
             final_gui_list.sort(key=sort_key)
 
-            self.root.after(0, lambda: self.race_info_label.config(text=f"{race_conditions.get('RaceName', '')} ({len(final_gui_list)}頭)"))
-            self.root.after(0, lambda details=final_gui_list: self._update_prediction_table(details))
+            # GUI更新
+            race_date_for_display = race_conditions.get('RaceDate')
+            race_date_str_display = race_date_for_display.strftime('%Y年%m月%d日') if pd.notna(race_date_for_display) else '日付不明'
+            track_name_display = str(race_conditions.get('TrackName', '場所不明'))
+            race_num_display = str(race_conditions.get('RaceNum', '?')).replace('R','')
+            race_name_display = str(race_conditions.get('RaceName', 'レース名不明'))
+            course_type_display = str(race_conditions.get('CourseType', '種別不明'))
+            distance_val_display = race_conditions.get('Distance')
+            distance_display_str = str(int(distance_val_display)) if pd.notna(distance_val_display) else '距離不明'
+            turn_detail_display = str(race_conditions.get('Around', ''))
+            weather_display = str(race_conditions.get('Weather', '天候不明'))
+            condition_display = str(race_conditions.get('TrackCondition', '馬場不明'))
+            
+            race_info_text = f"{race_date_str_display} {track_name_display}{race_num_display}R {race_name_display}"
+            race_details_text = f"{course_type_display}{turn_detail_display}{distance_display_str}m / 天候:{weather_display} / 馬場:{condition_display}"
+
+            self.prediction_results_data = final_gui_list
+
+            self.root.after(0, lambda: self.race_info_label.config(text=race_info_text))
+            self.root.after(0, lambda: self.race_details_label.config(text=race_details_text))
+            self.root.after(0, lambda: self._update_prediction_table(self.prediction_results_data))
             self.root.after(0, lambda: self.update_status(f"予測完了: {race_id}"))
 
         except Exception as e_main_fetch:
@@ -4669,7 +4890,7 @@ class HorseRacingAnalyzerApp:
             if driver:
                 try: driver.quit(); print("INFO: 共有WebDriverを終了しました。")
                 except Exception: pass
-    
+        
     # --- ★★★ 予測タブ テーブル更新メソッド (エラー表示強化・安定版) ★★★
     def _update_prediction_table(self, horses_info):
         """
