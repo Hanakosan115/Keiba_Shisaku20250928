@@ -2157,65 +2157,83 @@ class HorseRacingAnalyzerApp:
             else: return float(time_str)
         except (ValueError, TypeError): return None
     
-    def _prepare_data_for_model(self, data_df, is_prediction=False):
+    def _prepare_data_for_model(self, data_df, target_column='is_within_3rd', is_prediction=False):
         """
-        【改修版】モデル学習/予測のためのデータを準備する。
-        一部の統計データがなくても、警告を出すだけで処理を続行するように変更。
+        【再修正版】モデル学習/予測のためのデータを準備する。
+        先に正解ラベルを分離し、後から特徴量とインデックスを合わせる方式に変更。
         """
         if data_df is None or data_df.empty:
             print("ERROR: _prepare_data_for_model に渡されたデータが空です。")
             return None, None
 
-        # --- 特徴量計算を実行 ---
         print("モデル学習用のデータ準備を開始します (calculate_original_index を使用)...")
         
-        # --- 統計データの存在チェックを修正 ---
-        # 必須の統計データ
-        critical_stats = {
-            'course_time_stats': self.course_time_stats,
-            'father_stats': self.father_stats,
-            'mother_father_stats': self.mother_father_stats,
-            'jockey_trainer_stats': self.jockey_trainer_stats
-        }
-        # 任意（データが多ければ生成される）の統計データ
-        optional_stats = {
-            'gate_stats': self.gate_stats,
-            'reference_times': self.reference_times
-        }
-
-        # 1. 必須データが準備できているか確認
-        missing_critical = [name for name, stat_obj in critical_stats.items() if not stat_obj]
-        if missing_critical:
-            critical_msg = f"特徴量計算に必須の統計データが不足しています: {missing_critical}"
-            self.update_status(f"エラー: {critical_msg}", is_error=True)
-            print(f"CRITICAL_ERROR: {critical_msg}")
-            return None, None
-
-        # 2. 任意データがない場合は警告のみ
-        missing_optional = [name for name, stat_obj in optional_stats.items() if not stat_obj]
-        if missing_optional:
-            print(f"警告: 一部の統計データがありません: {missing_optional}。データ量が少ない場合これは正常です。処理を続行します。")
-        
-        # --- 特徴量計算の実行 ---
-        try:
-            features_df = self.calculate_original_index(data_df)
-            print("特徴量の計算が完了しました。")
-        except Exception as e:
-            print(f"!!! calculate_original_index実行中にエラーが発生: {e}")
-            traceback.print_exc()
-            return None, None
-
-        # --- 目的変数と特徴量の準備 ---
-        if 'is_within_3rd' in features_df.columns and not is_prediction:
-            X = features_df.drop(columns=['is_within_3rd'])
-            y = features_df['is_within_3rd']
-            # 訓練データの場合、NaNを含む行は除外
-            X = X.dropna(subset=self.get_feature_names(X))
-            y = y[X.index]
+        # 先に正解ラベル(y)を分離しておく
+        if not is_prediction:
+            if target_column not in data_df.columns:
+                print(f"ERROR: ターゲット列 '{target_column}' がデータに存在しません。")
+                return None, None
+            y = data_df[target_column].copy()
         else:
-            X = features_df
             y = None
+
+        all_features_list = []
+        total_races = data_df['race_id'].nunique()
+        processed_races = 0
+
+        # DataFrameをレースごとにグループ化してループ
+        for race_id, race_df_group in data_df.groupby('race_id'):
+            processed_races += 1
+            if processed_races % 100 == 0:
+                print(f"  特徴量計算中... ({processed_races}/{total_races})")
+
+            race_info_row = race_df_group.iloc[0]
+            race_conditions = {
+                'race_id': race_id,
+                'RaceName': race_info_row.get('race_name'),
+                'RaceDate': pd.to_datetime(race_info_row.get('date'), errors='coerce'),
+                'TrackName': race_info_row.get('track_name'),
+                'CourseType': race_info_row.get('course_type'),
+                'Distance': race_info_row.get('distance'),
+                'Weather': race_info_row.get('weather'),
+                'TrackCondition': race_info_row.get('track_condition'),
+                'baba': race_info_row.get('track_condition')
+            }
+
+            for index, horse_row in race_df_group.iterrows():
+                horse_details = horse_row.to_dict()
+                horse_id_str = str(horse_details.get('horse_id', '')).split('.')[0]
+                
+                if horse_id_str and horse_id_str in self.horse_details_cache:
+                    horse_details['race_results'] = self.horse_details_cache[horse_id_str].get('race_results', [])
+                else:
+                    horse_details['race_results'] = []
+
+                _, features_dict = self.calculate_original_index(horse_details, race_conditions)
+                
+                # 元のDataFrameのインデックスを保持しておく
+                features_dict['original_index'] = index
+                all_features_list.append(features_dict)
+
+        if not all_features_list:
+            print("ERROR: 特徴量リストが空です。")
+            return None, None
+            
+        # 特徴量データフレームを作成
+        X = pd.DataFrame(all_features_list)
+        X = X.set_index('original_index')
+        X = X.drop(columns=['error'], errors='ignore')
+
+        print("特徴量の計算が完了しました。")
         
+        # 訓練時のみ、特徴量(X)のインデックスに正解ラベル(y)を合わせる
+        if not is_prediction and y is not None:
+            # y と X のインデックスを合わせる
+            y = y.loc[X.index]
+            # NaNが含まれる行を削除
+            y = y.dropna()
+            X = X.loc[y.index]
+
         return X, y
    
     # --- ★★★ モデル学習・評価メソッド (特徴量形式の固定化 対応版) ★★★ ---
@@ -2373,6 +2391,11 @@ class HorseRacingAnalyzerApp:
         【最終修正版】モデル学習のメインスレッド。
         修正されたupdate_status関数と正しく連携する。
         """
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import roc_auc_score, log_loss
+        import lightgbm as lgb
+        import shap
+        
         try:
             self.update_status("データ準備を開始します。", clear_log=True)
             print("INFO: _run_training_pipeline_thread: データ準備を開始します。")
@@ -2396,12 +2419,18 @@ class HorseRacingAnalyzerApp:
                 print("ERROR: _run_training_pipeline_thread: _prepare_data_for_model が有効なデータを返しませんでした。")
                 self.update_status("エラー: モデル学習用のデータ準備に失敗しました。", is_error=True)
                 return
-
+            
+            cols_to_drop_before_training = ['horse_id', 'JockeyName', 'TrainerName', 'father', 'mother_father', 'HorseName']
+            existing_cols_to_drop = [col for col in cols_to_drop_before_training if col in X.columns]
+            if existing_cols_to_drop:
+                X = X.drop(columns=existing_cols_to_drop)
+                print(f"INFO: モデル学習から以下の文字列カラムを除外しました: {existing_cols_to_drop}")
+            
             self.update_status(f"データ準備完了。特徴量: {X.shape[1]}、データ数: {X.shape[0]}。モデル学習を開始します...")
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-            self.imputation_values = X_train.median()
+            self.imputation_values = X_train.select_dtypes(include=np.number).median()
             X_train = X_train.fillna(self.imputation_values)
             X_test = X_test.fillna(self.imputation_values)
 
@@ -2417,10 +2446,9 @@ class HorseRacingAnalyzerApp:
             
             result_message = f"学習完了！\nAUC Score: {auc_score:.4f}\nLog Loss: {logloss:.4f}"
             print(result_message)
-            self.log_message(result_message)
             self.update_status(result_message)
 
-            self.save_model()
+            self.save_model_to_file()
 
             self.update_status("SHAPの計算を開始します...")
             self.explainer = shap.TreeExplainer(self.model)
@@ -3513,14 +3541,12 @@ class HorseRacingAnalyzerApp:
         analyze_button = ttk.Button(left_frame, text="分析実行", command=self.run_analysis)
         analyze_button.grid(row=2, column=0, columnspan=2, pady=20)
 
-        # === 右側のフレーム（分析結果をテーブル表示） ===
-        # ★★★ 変数名を self.analysis_result_frame に変更 ★★★
-        self.analysis_result_frame = ttk.LabelFrame(self.tab_analysis, text="分析結果")
-        self.analysis_result_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10) # ★ pack も変更後の変数名で
+        # === 右側のフレーム（分析結果） ===
+        right_frame = ttk.Frame(self.tab_analysis)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # --- テーブル表示エリア ---
-        # ★★★ 親ウィジェットを self.analysis_result_frame に変更 ★★★
-        analysis_table_frame = ttk.Frame(self.analysis_result_frame)
+        analysis_table_frame = ttk.LabelFrame(right_frame, text="分析結果テーブル")
         analysis_table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         y_scrollbar = ttk.Scrollbar(analysis_table_frame, orient=tk.VERTICAL)
@@ -3531,17 +3557,22 @@ class HorseRacingAnalyzerApp:
         self.analysis_tree = ttk.Treeview(analysis_table_frame,
                                            yscrollcommand=y_scrollbar.set,
                                            xscrollcommand=x_scrollbar.set,
-                                           height=15)
+                                           height=8) # 高さを少し調整
         self.analysis_tree.pack(fill=tk.BOTH, expand=True)
         y_scrollbar.config(command=self.analysis_tree.yview)
         x_scrollbar.config(command=self.analysis_tree.xview)
+        
+        self.analysis_graph_frame = ttk.LabelFrame(right_frame, text="グラフ表示")
+        self.analysis_graph_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.analysis_figure = plt.Figure(figsize=(5, 4), dpi=100)
+        self.analysis_canvas = FigureCanvasTkAgg(self.analysis_figure, master=self.analysis_graph_frame)
+        self.analysis_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         # 結果保存ボタン (必要であれば後で実装)
         # save_result_button = ttk.Button(self.analysis_result_frame, text="結果を保存", command=self.save_analysis_result) # ★ 親を変更
         # save_result_button.pack(pady=10, anchor=tk.E)
 
-    
- 
     def init_prediction_tab(self):
         """予測タブの初期化"""
         # 左側のフレーム（予測設定）
@@ -3868,7 +3899,7 @@ class HorseRacingAnalyzerApp:
             self.status_var.set(message)
             
             # ログエリアの更新
-            if self.log_text:
+            if hasattr(self, 'log_text') and self.log_text:
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log_message = f"[{current_time}] {message}\n"
                 
@@ -4491,16 +4522,23 @@ class HorseRacingAnalyzerApp:
 
             # ★★★ ここから調教データの処理を追加 ★★★
             training_data_raw = self.get_training_data(race_id, driver)
-            training_df = pd.DataFrame()
             if training_data_raw:
                 training_df_raw = pd.DataFrame(training_data_raw)
                 training_df = self.process_training_features(training_df_raw)
-                # race_dfと調教データをマージ
                 if 'horse_id' in training_df.columns and not training_df.empty:
-                    # horse_idの型を文字列に統一してからマージする
                     race_df['horse_id'] = race_df['horse_id'].astype(str)
                     training_df['horse_id'] = training_df['horse_id'].astype(str)
                     race_df = pd.merge(race_df, training_df, on='horse_id', how='left')
+                else:
+                    # マージに失敗した場合でも空の列を追加
+                    print("WARN: 調教データとのマージに失敗。空の調教特徴量列を追加します。")
+                    for col in ['training_evaluation', 'training_total_time', 'training_last_furlong', 'training_eval_score', 'training_time_rank', 'training_last_furlong_rank']:
+                        if col not in race_df.columns: race_df[col] = np.nan
+            else:
+                # 調教データが取得できなかった場合、空の列を追加して列数を合わせる
+                print("WARN: 調教データが取得できなかったため、空の調教特徴量列を追加します。")
+                for col in ['training_evaluation', 'training_total_time', 'training_last_furlong', 'training_eval_score', 'training_time_rank', 'training_last_furlong_rank']:
+                    if col not in race_df.columns: race_df[col] = np.nan
             # ★★★ 調教データ処理ここまで ★★★
 
             for index, row_from_racedf in race_df.iterrows():
@@ -4535,28 +4573,41 @@ class HorseRacingAnalyzerApp:
                     gui_info['error_detail'] = "特徴量計算エラー"
                 else:
                     try:
-                        X_pred_raw = pd.DataFrame([features_dict])
-                        if 'prev_race_track_type_1ago' in X_pred_raw.columns:
-                            X_pred_raw = pd.get_dummies(X_pred_raw, columns=['prev_race_track_type_1ago'], prefix='prev_track_type', dummy_na=True)
-                        X_pred = pd.DataFrame(columns=self.model_features)._append(X_pred_raw, ignore_index=True).reindex(columns=self.model_features)
-                        
-                        if hasattr(self, 'imputation_values_'):
-                            for col in X_pred.columns:
-                                X_pred[col] = pd.to_numeric(X_pred[col], errors='coerce')
-                                if col in self.imputation_values_:
-                                    X_pred[col] = X_pred[col].fillna(self.imputation_values_[col])
-                        X_pred = X_pred.fillna(0)
+                        # 1. 学習時と全く同じ列構成の空のDataFrameを1行作成
+                        X_pred = pd.DataFrame(columns=self.model_features)
+                        X_pred.loc[0] = 0  # 全ての値を0で初期化
 
+                        # 2. 計算した特徴量を、対応する列に一つずつ代入
+                        for col, value in features_dict.items():
+                            if col in X_pred.columns:
+                                X_pred.loc[0, col] = value
+
+                        # 3. カテゴリ特徴量（ダミー変数）の処理
+                        #    学習時に存在したカテゴリ列のいずれかに1を立てる
+                        prev_track_type = features_dict.get('prev_race_track_type_1ago', 'Unknown')
+                        dummy_col_name = f'prev_track_type_{prev_track_type}'
+                        if dummy_col_name in X_pred.columns:
+                            X_pred.loc[0, dummy_col_name] = 1
+                        else:
+                            # 予測時に未知のカテゴリが出てきた場合、'nan' (欠損) 扱いにする
+                            nan_col_name = 'prev_track_type_nan'
+                            if nan_col_name in X_pred.columns:
+                                X_pred.loc[0, nan_col_name] = 1
+
+                        # 4. 欠損値を補完 (学習時の値を使用)
+                        if hasattr(self, 'imputation_values_') and self.imputation_values_:
+                            X_pred.fillna(self.imputation_values_, inplace=True)
+                        X_pred.fillna(0, inplace=True) # それでも残るものは0で埋める
+
+                        # 5. 予測を実行
                         gui_info['予測確率'] = self.trained_model.predict_proba(X_pred)[0, 1]
                         
+                        # 6. SHAPで予測の根拠を計算
                         if self.shap_explainer:
-                            self.root.after(0, lambda u=umaban: self.update_status(f"SHAP計算中: {u}番..."))
+                            self.root.after(0, lambda u=umaban_val: self.update_status(f"SHAP計算中: {u}番..."))
                             shap_values = self.shap_explainer.shap_values(X_pred)
                             
-                            if isinstance(shap_values, list) and len(shap_values) == 2:
-                                shap_values_for_class1 = shap_values[1][0]
-                            else:
-                                shap_values_for_class1 = shap_values[0]
+                            shap_values_for_class1 = shap_values[1][0] if isinstance(shap_values, list) and len(shap_values) == 2 else shap_values[0]
 
                             shap_df = pd.DataFrame({'feature': X_pred.columns, 'shap_value': shap_values_for_class1})
                             top_pos = shap_df[shap_df['shap_value'] > 0].nlargest(3, 'shap_value')
@@ -4566,9 +4617,10 @@ class HorseRacingAnalyzerApp:
                             gui_info['shap_summary'] = f"〇 {pos_str}\n× {neg_str}"
                         else:
                             gui_info['shap_summary'] = "解説器なし"
-                    except ValueError as ve:
-                         gui_info['error_detail'] = f"予測エラー: Value"
+                            
                     except Exception as e:
+                        print(f"!!! 予測計算中にエラーが発生 (馬番: {umaban_val}): {e}")
+                        traceback.print_exc()
                         gui_info['error_detail'] = f"予測エラー: {type(e).__name__}"
                 
                 final_gui_list.append(gui_info)
@@ -5349,7 +5401,44 @@ class HorseRacingAnalyzerApp:
 
         self.result_data = pd.DataFrame(results_list)
         print(f"サンプルデータ生成完了: Races={len(self.race_data)}, Horses={len(self.horse_data)}, Results={len(self.result_data)}")
+    
+    # ▼▼▼ plot_calibration_curve をこのコードに丸ごと置き換え ▼▼▼
+    def plot_calibration_curve(self, y_true, y_prob):
+        """
+        【修正版】キャリブレーションプロットを、分析タブの既存のキャンバスに描画する。
+        """
+        try:
+            from sklearn.calibration import calibration_curve
+            
+            # 既存のFigureをクリア
+            self.analysis_figure.clear()
+            
+            # 新しいプロットを追加
+            ax = self.analysis_figure.add_subplot(111)
+            prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=10, strategy='uniform')
+            
+            ax.plot(prob_pred, prob_true, marker='o', linewidth=1, label='LightGBM')
+            ax.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly calibrated')
+            
+            ax.set_xlabel("Mean predicted probability")
+            ax.set_ylabel("Fraction of positives")
+            ax.set_title("Calibration plot")
+            ax.legend()
+            ax.grid(True)
+            
+            self.analysis_figure.tight_layout()
+            
+            # 既存のキャンバスを再描画
+            self.analysis_canvas.draw()
 
+        except ImportError:
+            self.update_status("エラー: scikit-learnが必要です。", is_error=True)
+            print("ERROR: scikit-learn is not installed. Please install it using 'pip install scikit-learn'")
+        except Exception as e:
+            self.update_status(f"キャリブレーションプロット作成エラー: {e}", is_error=True)
+            print(f"!!! ERROR in plot_calibration_curve: {e}")
+            traceback.print_exc()
+   
 def main():
     root = tk.Tk()
     # DPIスケーリング対応 (Windows)
