@@ -2235,143 +2235,69 @@ class HorseRacingAnalyzerApp:
             X = X.loc[y.index]
 
         return X, y
-   
-    # --- ★★★ モデル学習・評価メソッド (特徴量形式の固定化 対応版) ★★★ ---
-    def train_and_evaluate_model(self, processed_data, target_column='target_rank_within_3'):
+    
+    def train_and_evaluate_model(self, df):
         """
-        LightGBMモデルの学習、評価、保存を行う。
-        ★★★ 修正点: ダミー変数化後の最終的な特徴量リストをself.model_featuresとして確定・保存する。 ★★★
+        【同期修正版】データの前処理、モデルの学習、評価、保存を行う。
+        予測時と完全に同じ特徴量エンジニアリングを保証する。
         """
-        import pandas as pd
-        import numpy as np
-        import lightgbm as lgb
-        import shap
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, confusion_matrix
-        from sklearn.calibration import CalibrationDisplay
-        import matplotlib.pyplot as plt
-        import os
-        import traceback
-        from tkinter import messagebox
-
         try:
-            self.update_status("モデル学習と評価を開始します...")
-            print("\n--- Starting Model Training and Evaluation ---")
+            self.update_status("モデル学習を開始します...")
+            print("INFO: モデル学習プロセス開始。")
 
-            if processed_data is None or processed_data.empty:
-                messagebox.showerror("学習エラー", "学習に使用するデータがありません。")
-                self.update_status("エラー: 学習データなし")
-                return
+            target = 'rank_binary'
+            COLS_TO_DROP = ['rank_binary', 'horse_id', 'JockeyName', 'TrainerName', 'father', 'mother_father']
+            CATEGORICAL_FEATURES = ['prev_race_track_type_1ago']
 
-            cols_to_drop_for_X = [
-                target_column, 'race_id', 'horse_id', 'HorseName', 'date', 'Time', 'Rank','Diff', 'Ninki', 'Odds', 
-                'Odds_x', 'Odds_y', 'Umaban', 'Waku', 'SexAge', 'JockeyName', 'TrainerName', 'father', 'mother_father', 
-                'WeightInfo', 'WeightInfoShutuba', 'error'
-            ]
-            existing_cols_to_drop_for_X = [col for col in cols_to_drop_for_X if col in processed_data.columns]
-            X = processed_data.drop(columns=existing_cols_to_drop_for_X, errors='ignore').copy()
-            y = processed_data[target_column].astype(int)
+            df_model = df.drop(columns=[col for col in COLS_TO_DROP if col in df.columns and col != target], errors='ignore')
 
-            print("特徴量データのデータ型前処理と欠損値補完を開始します...")
-            
-            # カテゴリカル変数のダミー化
-            if 'prev_race_track_type_1ago' in X.columns:
-                X = pd.get_dummies(X, columns=['prev_race_track_type_1ago'], prefix='prev_track_type', dummy_na=True)
+            for col in CATEGORICAL_FEATURES:
+                if col in df_model.columns:
+                    df_model[col] = df_model[col].astype('category')
 
-            # 最終的な特徴量のリスト(列名)をこの時点で確定させる
-            final_feature_columns = list(X.columns)
-            
-            if not hasattr(self, 'imputation_values_'): self.imputation_values_ = {}
+            df_processed = pd.get_dummies(df_model, columns=CATEGORICAL_FEATURES, dummy_na=True)
 
-            for col in final_feature_columns:
-                if col in X.columns:
-                    # まず数値型に強制変換
-                    X[col] = pd.to_numeric(X[col], errors='coerce')
-                    # 学習時の補完値を計算・保存
-                    if col not in self.imputation_values_:
-                        mean_val = X[col].mean()
-                        self.imputation_values_[col] = 0 if pd.isna(mean_val) else mean_val
-                    # 欠損値を補完
-                    X[col] = X[col].fillna(self.imputation_values_[col])
-                else:
-                    # この時点ではXに全ての列が存在するはず
-                    pass
-            
-            # self.model_features を最終的な列リストで上書きする
-            self.model_features = final_feature_columns
-            print(f"データ型処理後の最終的な学習特徴量 ({len(self.model_features)}個): {self.model_features}")
+            X = df_processed.drop(columns=[target])
+            y = df_processed[target]
+
+            self.imputation_values_ = X.median()
+            X = X.fillna(self.imputation_values_)
+
+            self.model_features = X.columns.tolist()
+            print(f"INFO: 学習に使用する特徴量の数: {len(self.model_features)}")
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-            
-            lgbm_params = { 'objective': 'binary', 'metric': 'auc', 'boosting_type': 'gbdt', 'n_estimators': 1000, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': -1, 'min_child_samples': 20, 'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42, 'n_jobs': -1, 'verbose': -1 }
-            self.trained_model = lgb.LGBMClassifier(**lgbm_params)
 
-            print("モデルの学習を開始します...")
-            self.trained_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], eval_metric='auc', callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=-1)])
-            print("モデルの学習が完了しました。")
+            self.update_status("LightGBMモデルの学習中...")
+            model = lgb.LGBMClassifier(random_state=42)
+            model.fit(X_train, y_train)
+            self.trained_model = model
+            print("INFO: モデル学習完了！")
 
-            print("SHAP解説器を作成します...")
-            explainer = shap.TreeExplainer(self.trained_model)
-            self.shap_explainer = explainer
-            print("SHAP解説器の作成が完了しました。")
-            
-            # --- 保存処理 ---
-            model_save_dir = self.settings.get("models_dir", os.path.join(self.app_data_dir, "models"))
-            if not os.path.exists(model_save_dir): os.makedirs(model_save_dir, exist_ok=True)
-            
-            model_filepath = os.path.join(model_save_dir, "trained_lgbm_model.pkl")
-            features_filepath = os.path.join(model_save_dir, "model_features.pkl")
-            imputation_filepath = os.path.join(model_save_dir, "imputation_values.pkl")
-            explainer_filepath = os.path.join(model_save_dir, "shap_explainer.pkl")
-
-            settings_updated = False
-            if self._save_pickle(self.trained_model, model_filepath): self.settings["trained_model_path"] = model_filepath; settings_updated = True
-            if self._save_pickle(self.model_features, features_filepath): self.settings["model_features_path"] = features_filepath; settings_updated = True
-            if self._save_pickle(self.imputation_values_, imputation_filepath): self.settings["imputation_values_path"] = imputation_filepath; settings_updated = True
-            if hasattr(self, 'shap_explainer') and self.shap_explainer and self._save_pickle(self.shap_explainer, explainer_filepath): 
-                self.settings["shap_explainer_path"] = explainer_filepath; settings_updated = True
-            if settings_updated: self.save_settings()
-
-            # --- 評価とプロット ---
-            y_pred_proba = self.trained_model.predict_proba(X_test)[:, 1]
-            y_pred_binary = (y_pred_proba >= 0.5).astype(int)
+            y_pred_proba = model.predict_proba(X_test)[:, 1]
             auc = roc_auc_score(y_test, y_pred_proba)
-            accuracy = accuracy_score(y_test, y_pred_binary)
-            precision = precision_score(y_test, y_pred_binary, zero_division=0)
-            recall = recall_score(y_test, y_pred_binary, zero_division=0)
-            cm = confusion_matrix(y_test, y_pred_binary)
-            eval_results_text = (
-                f"モデル評価結果 (テストデータ):\n\nAUC Score: {auc:.4f}\n\n"
-                f"--- 閾値 0.5 での評価 ---\nAccuracy (正解率): {accuracy:.4f}\n"
-                f"Precision (適合率): {precision:.4f}\nRecall (再現率): {recall:.4f}\n\n"
-                f"Confusion Matrix:\n{cm}\n(行: 実際の0/1, 列: 予測の0/1)"
-            )
-            print(f"  AUC Score: {auc:.4f}\n  Accuracy (Threshold 0.5): {accuracy:.4f}\n  Precision (Threshold 0.5): {precision:.4f}\n  Recall (Threshold 0.5): {recall:.4f}\n  Confusion Matrix (Threshold 0.5):\n{cm}")
+            logloss = log_loss(y_test, y_pred_proba)
+            self.update_status(f"学習完了！ AUC: {auc:.4f}, LogLoss: {logloss:.4f}")
+            print(f"AUC Score: {auc:.4f}\nLog Loss: {logloss:.4f}")
 
-            try:
-                print("キャリブレーションプロットを作成します...")
-                fig, ax = plt.subplots()
-                CalibrationDisplay.from_estimator(self.trained_model, X_test, y_test, n_bins=10, ax=ax, strategy='uniform')
-                ax.set_title('キャリブレーションプロット (テストデータ)')
-                ax.set_xlabel('予測された3着以内確率の平均値'); ax.set_ylabel('観測された3着以内率')
-                plt.grid(True)
-                plot_save_dir = self.settings.get("data_dir", ".")
-                if not os.path.exists(plot_save_dir): os.makedirs(plot_save_dir, exist_ok=True)
-                plot_filepath = os.path.join(plot_save_dir, "calibration_plot.png")
-                plt.savefig(plot_filepath)
-                print(f"キャリブレーションプロットを保存しました: {plot_filepath}")
-                self.root.after(0, lambda: messagebox.showinfo("モデル評価結果", f"{eval_results_text}\n\nキャリブレーションプロットが保存されました。"))
-                plt.close(fig)
-            except Exception as e_plot:
-                print(f"キャリブレーションプロット作成エラー: {e_plot}")
-                self.root.after(0, lambda: messagebox.showerror("プロット作成エラー", f"エラー:\n{e_plot}\n\n{eval_results_text}"))
-            
-            self.update_status("モデル学習と評価が完了しました。")
+            with open(self.MODEL_PATH, 'wb') as f:
+                pickle.dump(model, f)
+            with open(self.FEATURES_PATH, 'wb') as f:
+                pickle.dump(self.model_features, f)
+            with open(self.IMPUTATION_PATH, 'wb') as f:
+                pickle.dump(self.imputation_values_, f)
+
+            print(f"INFO: 学習済みモデル等を {self.MODEL_DIR} に保存しました。")
+            self.load_model_and_features(force_reload=True)
+            self.root.after(0, lambda: messagebox.showinfo("完了", "モデルの学習が完了しました。"))
+            return True
+
         except Exception as e:
+            print(f"!!! モデル学習中にエラーが発生: {e}")
             traceback.print_exc()
-            self.root.after(0, lambda: messagebox.showerror("モデル学習エラー", f"予期せぬエラー:\n{e}"))
-        finally:
-            print("--- Model Training and Evaluation Finished ---")
+            self.root.after(0, lambda err=e: messagebox.showerror("エラー", f"モデル学習中にエラーが発生しました:\n{err}"))
+            self.update_status(f"エラー: {e}")
+            return False
         
     def start_model_training_process(self):
         """
@@ -4468,31 +4394,78 @@ class HorseRacingAnalyzerApp:
 
         self.update_status(f"レース情報検索中: {race_id}")
         self.run_in_thread(self._fetch_race_info_thread, race_id)
-    
-    def _fetch_race_info_thread(self, race_id):
+
+    def run_prediction(self):
         """
-        レース情報の取得と表示、学習済みモデルでの予測確率計算を行う。
-        【改善版】
-        - 調教データを取得し、特徴量としてマージする機能を追加。
-        - WebDriverをレース単位で一度だけ起動し、各処理に再利用することで効率化。
-        - SHAP解説器を使用し、予測の根拠を計算して表示する機能を追加。
+        「予測実行」ボタンが押されたときに呼び出される。
+        入力されたレースIDを取得し、予測スレッドを開始する。
+        """
+        import threading
+        from tkinter import messagebox
+
+        race_id = self.race_id_entry.get().strip()
+        if not race_id:
+            messagebox.showwarning("入力エラー", "レースIDを入力してください。")
+            return
+        
+        if not race_id.isdigit():
+            messagebox.showwarning("入力エラー", "レースIDは数字で入力してください。")
+            return
+
+        # 予測処理を別スレッドで実行してUIのフリーズを防ぐ
+        thread = threading.Thread(target=self._fetch_race_info_thread, args=(race_id,))
+        thread.daemon = True
+        thread.start()
+
+    def save_prediction_result(self):
+        """
+        「予測結果を保存」ボタンが押されたときに呼び出される。
+        表示されている予測結果をCSVファイルに保存する。
         """
         import pandas as pd
-        import numpy as np
-        import traceback
-        import re
-        from tkinter import messagebox
-        import tkinter as tk
-        import shap
+        from tkinter import filedialog, messagebox
         import os
 
-        driver = None # finallyブロックで参照できるよう、最初に定義
-        final_gui_list = []
+        if not hasattr(self, 'prediction_results_data') or not self.prediction_results_data:
+            messagebox.showinfo("保存エラー", "保存する予測結果がありません。")
+            return
+        
+        try:
+            # 現在のレース情報をファイル名に使用
+            race_info = self.race_info_label.cget("text").replace(" ", "_").replace(":", "")
+            initial_filename = f"{race_info}_prediction.csv"
+
+            # 保存ダイアログを開く
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSVファイル", "*.csv")],
+                initialfile=initial_filename,
+                title="予測結果を保存"
+            )
+
+            if filepath:
+                df_to_save = pd.DataFrame(self.prediction_results_data)
+                df_to_save.to_csv(filepath, index=False, encoding='utf-8-sig')
+                messagebox.showinfo("保存完了", f"予測結果を以下のファイルに保存しました:\n{os.path.basename(filepath)}")
+                self.update_status(f"予測結果を {os.path.basename(filepath)} に保存しました。")
+
+        except Exception as e:
+            messagebox.showerror("保存エラー", f"ファイルの保存中にエラーが発生しました:\n{e}")
+
+    def run_result_analysis(self):
+        """
+        「バックテスト実行」ボタンが押されたときに呼び出される。
+        （現在は未実装のため、メッセージのみ表示）
+        """
+        from tkinter import messagebox
+        messagebox.showinfo("未実装", "この機能は現在実装されていません。")
+        print("INFO: バックテスト機能は未実装です。")
+    
+    def _fetch_race_info_thread(self, race_id):
+        driver = None
         try:
             self.root.after(0, lambda: self.update_status(f"レースID {race_id}: 予測処理準備中..."))
-            print(f"--- _fetch_race_info_thread: START (Race ID: {race_id}) ---")
-
-            # --- WebDriverを一度だけ起動 ---
+            
             options = webdriver.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.add_argument(f'--user-agent={self.USER_AGENT}')
@@ -4500,50 +4473,30 @@ class HorseRacingAnalyzerApp:
             options.add_argument('--disable-gpu'); options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage'); options.add_argument("--log-level=3")
             options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
-
+            
             if self.CHROME_DRIVER_PATH and os.path.exists(self.CHROME_DRIVER_PATH):
                 service = ChromeService(executable_path=self.CHROME_DRIVER_PATH)
                 driver = webdriver.Chrome(service=service, options=options)
             else:
                 driver = webdriver.Chrome(options=options)
             
-            if not all(hasattr(self, attr) and getattr(self, attr) for attr in ['trained_model', 'model_features', 'shap_explainer']):
-                messagebox.showwarning("モデルまたは解説器が未ロード", "モデル等が読み込まれていません。\nデータ管理タブでモデルを再学習してください。")
+            if not all(hasattr(self, attr) and getattr(self, attr) for attr in ['trained_model', 'model_features']):
+                self.root.after(0, lambda: messagebox.showwarning("モデル未ロード", "モデルが読み込まれていません。\nデータ管理タブでモデルを再学習してください。"))
                 return
 
-            # --- 1. 出馬表とレース共通情報を取得 ---
-            web_data = self.get_shutuba_table(race_id)
+            web_data = self.get_shutuba_table(race_id, driver)
             if not (web_data and web_data.get('horse_list')):
-                messagebox.showerror("情報取得エラー", "出走馬情報を取得できませんでした。"); return
+                self.root.after(0, lambda: messagebox.showerror("情報取得エラー", "出走馬情報を取得できませんでした。"))
+                return
             
             race_df = pd.DataFrame(web_data['horse_list'])
             race_conditions = web_data.get('race_details', {})
             race_conditions['RaceDate'] = pd.to_datetime(race_conditions.get('RaceDate'), format='%Y年%m月%d日', errors='coerce')
-
-            # ★★★ ここから調教データの処理を追加 ★★★
-            training_data_raw = self.get_training_data(race_id, driver)
-            if training_data_raw:
-                training_df_raw = pd.DataFrame(training_data_raw)
-                training_df = self.process_training_features(training_df_raw)
-                if 'horse_id' in training_df.columns and not training_df.empty:
-                    race_df['horse_id'] = race_df['horse_id'].astype(str)
-                    training_df['horse_id'] = training_df['horse_id'].astype(str)
-                    race_df = pd.merge(race_df, training_df, on='horse_id', how='left')
-                else:
-                    # マージに失敗した場合でも空の列を追加
-                    print("WARN: 調教データとのマージに失敗。空の調教特徴量列を追加します。")
-                    for col in ['training_evaluation', 'training_total_time', 'training_last_furlong', 'training_eval_score', 'training_time_rank', 'training_last_furlong_rank']:
-                        if col not in race_df.columns: race_df[col] = np.nan
-            else:
-                # 調教データが取得できなかった場合、空の列を追加して列数を合わせる
-                print("WARN: 調教データが取得できなかったため、空の調教特徴量列を追加します。")
-                for col in ['training_evaluation', 'training_total_time', 'training_last_furlong', 'training_eval_score', 'training_time_rank', 'training_last_furlong_rank']:
-                    if col not in race_df.columns: race_df[col] = np.nan
-            # ★★★ 調教データ処理ここまで ★★★
-
+            
+            final_gui_list = []
             for index, row_from_racedf in race_df.iterrows():
                 umaban = row_from_racedf.get('Umaban'); horse_name = row_from_racedf.get('HorseName')
-                self.root.after(0, lambda u=umaban, n=horse_name, i=index+1, total=len(race_df): self.update_status(f"予測中 ({i}/{total}): {u}番 {n}"))
+                self.root.after(0, lambda u=umaban, n=horse_name, i=index+1, t=len(race_df): self.update_status(f"予測中 ({i}/{t}): {u}番 {n}"))
 
                 gui_info = { 'Umaban': umaban, 'HorseName': horse_name, 'SexAge': row_from_racedf.get('SexAge'), 'Load': row_from_racedf.get('Load'), 'JockeyName': row_from_racedf.get('JockeyName'), 'Odds': row_from_racedf.get('Odds'), '近3走': "データ無", '予測確率': None, 'shap_summary': "N/A", 'error_detail': None }
                 
@@ -4551,105 +4504,51 @@ class HorseRacingAnalyzerApp:
                 if not horse_id_str:
                     gui_info['error_detail'] = "馬IDなし"; final_gui_list.append(gui_info); continue
 
-                horse_full_details = self.horse_details_cache.get(horse_id_str)
-                if not horse_full_details:
-                    horse_full_details = self.get_horse_details(horse_id_str, driver=driver)
-                    if horse_full_details and not horse_full_details.get('error'):
-                        self.horse_details_cache[horse_id_str] = horse_full_details
+                horse_full_details = self.horse_details_cache.get(horse_id_str, {})
                 
                 horse_basic_info = dict(row_from_racedf)
-                if isinstance(horse_full_details, dict): horse_basic_info.update(horse_full_details)
-
-                predict_race_date = race_conditions.get('RaceDate')
-                if predict_race_date and 'race_results' in horse_basic_info and isinstance(horse_basic_info['race_results'], list):
-                     horse_basic_info['race_results'] = [r for r in horse_basic_info['race_results'] if isinstance(r, dict) and pd.to_datetime(r.get('date'), errors='coerce') < predict_race_date]
+                horse_basic_info.update(horse_full_details)
                 
-                recent_ranks = [str(r.get('rank', '?')) for r in horse_basic_info.get('race_results', [])[:3]]
-                gui_info['近3走'] = "/".join(recent_ranks) if recent_ranks else "データ無"
-                 
                 _, features_dict = self.calculate_original_index(horse_basic_info, race_conditions)
                 
                 if features_dict.get('error'):
                     gui_info['error_detail'] = "特徴量計算エラー"
                 else:
                     try:
-                        # 1. 学習時と全く同じ列構成の空のDataFrameを1行作成
-                        X_pred = pd.DataFrame(columns=self.model_features)
-                        X_pred.loc[0] = 0  # 全ての値を0で初期化
-
-                        # 2. 計算した特徴量を、対応する列に一つずつ代入
-                        for col, value in features_dict.items():
-                            if col in X_pred.columns:
-                                X_pred.loc[0, col] = value
-
-                        # 3. カテゴリ特徴量（ダミー変数）の処理
-                        #    学習時に存在したカテゴリ列のいずれかに1を立てる
-                        prev_track_type = features_dict.get('prev_race_track_type_1ago', 'Unknown')
-                        dummy_col_name = f'prev_track_type_{prev_track_type}'
-                        if dummy_col_name in X_pred.columns:
-                            X_pred.loc[0, dummy_col_name] = 1
-                        else:
-                            # 予測時に未知のカテゴリが出てきた場合、'nan' (欠損) 扱いにする
-                            nan_col_name = 'prev_track_type_nan'
-                            if nan_col_name in X_pred.columns:
-                                X_pred.loc[0, nan_col_name] = 1
-
-                        # 4. 欠損値を補完 (学習時の値を使用)
-                        if hasattr(self, 'imputation_values_') and self.imputation_values_:
-                            X_pred.fillna(self.imputation_values_, inplace=True)
-                        X_pred.fillna(0, inplace=True) # それでも残るものは0で埋める
-
-                        # 5. 予測を実行
-                        gui_info['予測確率'] = self.trained_model.predict_proba(X_pred)[0, 1]
+                        X_pred_raw = pd.DataFrame([features_dict])
+                        CATEGORICAL_FEATURES = ['prev_race_track_type_1ago']
+                        for col in CATEGORICAL_FEATURES:
+                            if col in X_pred_raw.columns:
+                                X_pred_raw[col] = X_pred_raw[col].astype('category')
                         
-                        # 6. SHAPで予測の根拠を計算
-                        if self.shap_explainer:
-                            self.root.after(0, lambda u=umaban_val: self.update_status(f"SHAP計算中: {u}番..."))
-                            shap_values = self.shap_explainer.shap_values(X_pred)
-                            
-                            shap_values_for_class1 = shap_values[1][0] if isinstance(shap_values, list) and len(shap_values) == 2 else shap_values[0]
+                        X_pred_dummies = pd.get_dummies(X_pred_raw, columns=CATEGORICAL_FEATURES, dummy_na=True)
+                        X_pred_aligned = X_pred_dummies.reindex(columns=self.model_features, fill_value=0)
+                        X_pred_filled = X_pred_aligned.fillna(self.imputation_values_)
+                        X_pred_final = X_pred_filled.fillna(0)
 
-                            shap_df = pd.DataFrame({'feature': X_pred.columns, 'shap_value': shap_values_for_class1})
+                        if X_pred_final.shape[1] != len(self.model_features):
+                            raise RuntimeError(f"最終特徴量数が不一致です。予測: {X_pred_final.shape[1]}, 学習: {len(self.model_features)}")
+
+                        gui_info['予測確率'] = self.trained_model.predict_proba(X_pred_final)[0, 1]
+
+                        if self.shap_explainer:
+                            shap_values = self.shap_explainer.shap_values(X_pred_final)
+                            shap_values_for_class1 = shap_values[1][0] if isinstance(shap_values, list) else shap_values[0]
+                            shap_df = pd.DataFrame({'feature': X_pred_final.columns, 'shap_value': shap_values_for_class1})
                             top_pos = shap_df[shap_df['shap_value'] > 0].nlargest(3, 'shap_value')
                             top_neg = shap_df[shap_df['shap_value'] < 0].nsmallest(3, 'shap_value')
                             pos_str = ", ".join([f"{r.feature}({r.shap_value:+.2f})" for r in top_pos.itertuples()])
                             neg_str = ", ".join([f"{r.feature}({r.shap_value:+.2f})" for r in top_neg.itertuples()])
                             gui_info['shap_summary'] = f"〇 {pos_str}\n× {neg_str}"
-                        else:
-                            gui_info['shap_summary'] = "解説器なし"
                             
                     except Exception as e:
-                        print(f"!!! 予測計算中にエラーが発生 (馬番: {umaban_val}): {e}")
+                        print(f"!!! 予測計算中にエラーが発生 (馬番: {umaban}): {e}")
                         traceback.print_exc()
                         gui_info['error_detail'] = f"予測エラー: {type(e).__name__}"
                 
                 final_gui_list.append(gui_info)
 
-            def sort_key(horse_dict):
-                error, proba = horse_dict.get("error_detail"), horse_dict.get("予測確率")
-                return (bool(error), proba is None, -proba if proba is not None else 1)
-            final_gui_list.sort(key=sort_key)
-
-            # GUI更新
-            race_date_for_display = race_conditions.get('RaceDate')
-            race_date_str_display = race_date_for_display.strftime('%Y年%m月%d日') if pd.notna(race_date_for_display) else '日付不明'
-            track_name_display = str(race_conditions.get('TrackName', '場所不明'))
-            race_num_display = str(race_conditions.get('RaceNum', '?')).replace('R','')
-            race_name_display = str(race_conditions.get('RaceName', 'レース名不明'))
-            course_type_display = str(race_conditions.get('CourseType', '種別不明'))
-            distance_val_display = race_conditions.get('Distance')
-            distance_display_str = str(int(distance_val_display)) if pd.notna(distance_val_display) else '距離不明'
-            turn_detail_display = str(race_conditions.get('Around', ''))
-            weather_display = str(race_conditions.get('Weather', '天候不明'))
-            condition_display = str(race_conditions.get('TrackCondition', '馬場不明'))
-            
-            race_info_text = f"{race_date_str_display} {track_name_display}{race_num_display}R {race_name_display}"
-            race_details_text = f"{course_type_display}{turn_detail_display}{distance_display_str}m / 天候:{weather_display} / 馬場:{condition_display}"
-
-            self.prediction_results_data = final_gui_list
-
-            self.root.after(0, lambda: self.race_info_label.config(text=race_info_text))
-            self.root.after(0, lambda: self.race_details_label.config(text=race_details_text))
+            self.prediction_results_data = sorted(final_gui_list, key=lambda x: x.get('予測確率') or -1, reverse=True)
             self.root.after(0, lambda: self._update_prediction_table(self.prediction_results_data))
             self.root.after(0, lambda: self.update_status(f"予測完了: {race_id}"))
 
@@ -4658,264 +4557,32 @@ class HorseRacingAnalyzerApp:
             self.root.after(0, lambda err=e_main_fetch: messagebox.showerror("予測処理エラー", f"予期せぬエラーが発生しました:\n{err}"))
         finally:
             if driver:
-                try: driver.quit(); print("INFO: 共有WebDriverを終了しました。")
+                try: driver.quit()
                 except Exception: pass
+
+    def _update_prediction_table(self, data):
+        """予測結果テーブルを更新する"""
+        for i in self.tree.get_children():
+            self.tree.delete(i)
         
-    # --- ★★★ 予測タブ テーブル更新メソッド (エラー表示強化・安定版) ★★★
-    def _update_prediction_table(self, horses_info):
-        """
-        予測タブの出走馬テーブルを更新。
-        ★★★ 修正点: どんなデータ構造でも安全に表示できるようにする。★★★
-        """
-        try:
-            if not hasattr(self, 'prediction_tree') or not self.prediction_tree.winfo_exists(): return
-            for item in self.prediction_tree.get_children(): self.prediction_tree.delete(item)
-            if not horses_info: self.prediction_tree["columns"] = []; return
-
-            columns = ["Umaban", "HorseName", "SexAge", "Load", "JockeyName", "Odds", "近3走", "予測確率", "shap_summary", "error_detail"]
-            self.prediction_tree["columns"] = columns
-            self.prediction_tree["show"] = "headings"
-
-            col_settings = {
-                "Umaban": {"text": "馬番", "width": 40, "anchor": tk.CENTER},
-                "HorseName": {"text": "馬名", "width": 120, "anchor": tk.W},
-                "SexAge": {"text": "性齢", "width": 50, "anchor": tk.CENTER},
-                "Load": {"text": "斤量", "width": 50, "anchor": tk.E},
-                "JockeyName": {"text": "騎手", "width": 80, "anchor": tk.W},
-                "Odds": {"text": "単勝", "width": 60, "anchor": tk.E},
-                "近3走": {"text": "近3走", "width": 70, "anchor": tk.CENTER},
-                "予測確率": {"text": "予測確率", "width": 70, "anchor": tk.E},
-                "shap_summary": {"text": "予測根拠 (〇プラス / ×マイナス)", "width": 250, "anchor": tk.W},
-                "error_detail": {"text": "エラー詳細", "width": 100, "anchor": tk.W}
-            }
-            for col_id, setting in col_settings.items():
-                self.prediction_tree.column(col_id, width=setting["width"], anchor=setting["anchor"], stretch=tk.NO)
-                self.prediction_tree.heading(col_id, text=setting["text"])
-
-            # --- データ追加 ---
-            for i, horse_data in enumerate(horses_info):
-                # ★★★ 表示する値を安全に取得・整形する ★★★
-                umaban = horse_data.get("Umaban", "")
-                horse_name = horse_data.get("HorseName", "名前不明")
-                sex_age = horse_data.get("SexAge", "")
-                load = horse_data.get("Load", "")
-                jockey = horse_data.get("JockeyName", "")
-                odds_raw = horse_data.get("Odds")
-                odds = f"{float(odds_raw):.1f}" if pd.notna(odds_raw) else ""
-                kin3so = horse_data.get("近3走", "")
-                proba_raw = horse_data.get("予測確率")
-                proba = f"{proba_raw:.4f}" if proba_raw is not None else "---"
-                shap_summary = horse_data.get("shap_summary", "")
-                error_detail = horse_data.get("error_detail", "")
-                
-                # エラーがある場合は確率を「エラー」と表示
-                if error_detail:
-                    proba = "エラー"
-
-                display_values = [
-                    umaban, horse_name, sex_age, load, jockey, odds,
-                    kin3so, proba, shap_summary, error_detail
-                ]
-                
-                # テーブルに値を挿入
-                self.prediction_tree.insert("", "end", values=display_values, iid=f"horse_{i}")
+        for item in data:
+            prob = item.get('予測確率')
+            prob_str = f"{prob:.1%}" if prob is not None else "N/A"
             
-            self.update_status(f"予測結果をテーブルに表示しました ({len(horses_info)}件)")
-        except Exception as e:
-            traceback.print_exc()
-            self.update_status(f"エラー: テーブル表示失敗 ({type(e).__name__})")
-
-    def run_prediction(self):
-        """予測実行処理"""
-        # レース情報が表示されているか（出走馬テーブルにデータがあるか）確認
-        # このチェックは _fetch_race_info_thread 実行前には不要かもしれません。
-        # race_id さえあれば _fetch_race_info_thread が情報を取得するため。
-        # if not self.prediction_tree.get_children():
-        #     messagebox.showwarning("予測実行", "予測対象のレース情報が表示されていません。\nレースIDを入力して「レース情報表示」ボタンを押してください。")
-        #     return
-
-        # 学習済みモデルの存在チェックは _fetch_race_info_thread 側で行っています。
-        # if self.model is None: # self.model ではなく self.trained_model を想定
-        #     messagebox.showwarning("予測実行", "予測モデルがロードされていません。\n設定タブでモデルをロードするか、学習させてください。")
-        #     return
-
-        # 予測タブにあるレースID入力フィールドから race_id を取得
-        race_id = self.predict_race_id_var.get()
-        if not race_id:
-            messagebox.showerror("エラー", "レースIDが入力されていません。\n予測タブの「レースID」フィールドにIDを入力してください。")
-            self.update_status("エラー: レースID未入力")
-            return
-
-        # prediction_type_var (win, utan, santan など) は、現在の _fetch_race_info_thread では
-        # 直接使用されていません。_fetch_race_info_thread は主に「3着以内確率」を計算します。
-        # もしこれらの券種別の予測を将来的に実装する場合は、_fetch_race_info_thread の改修や
-        # 別途専用の予測ロジックが必要になります。
-        prediction_type = self.prediction_type_var.get()
-        self.update_status(f"レースID {race_id} の {prediction_type} 予測準備中...") # ステータス表示を少し変更
-
-        # テーブルから現在の出走馬情報を取得する部分は、_fetch_race_info_thread が
-        # race_id を元に情報を取得し直すため、ここでは不要になります。
-        # horses_on_table = []
-        # ... (中略) ...
-        # if not horses_on_table:
-        #     messagebox.showerror("予測エラー", "出走馬情報が見つかりません。")
-        #     self.update_status("エラー: 出走馬情報なし")
-        #     return
-
-        # 既存の _fetch_race_info_thread を呼び出して予測処理を実行します。
-        # このメソッドは引数として race_id を取ります。
-        self.update_status(f"レースID {race_id} の予測実行中...")
-        self.run_in_thread(self._fetch_race_info_thread, race_id) # 第2引数 horses_on_table は不要
-        # ↑↑↑ 修正案ここまで ↑↑↑
-
-    def _update_prediction_result_table(self, predictions, columns):
-        """予測結果テーブルの更新"""
-        # テーブルクリア
-        for item in self.prediction_tree.get_children():
-            self.prediction_tree.delete(item)
-
-        if not predictions: # 結果がない場合は列設定もしない
-            self.prediction_tree["columns"] = []
-            return
-
-        # 列設定
-        self.prediction_tree["columns"] = columns
-        self.prediction_tree["show"] = "headings"
-
-        # 列幅とアライメントを設定
-        for col in columns:
-            width = 80 # デフォルト幅
-            anchor = tk.W # デフォルト左寄せ
-            if "馬番" in col:
-                width = 100 if "→" in col else 40 # 組み合わせなら広く
-                anchor = tk.CENTER
-            elif "馬名" in col:
-                 width = 150 if "→" in col else 120
-            elif "オッズ" in col:
-                 width = 70
-                 anchor = tk.E
-            elif "確率" in col:
-                 width = 70
-                 anchor = tk.E
-            elif "期待値" in col:
-                 width = 60
-                 anchor = tk.E
-
-            self.prediction_tree.heading(col, text=col)
-            self.prediction_tree.column(col, width=width, anchor=anchor)
-
-        # データ追加
-        for i, pred in enumerate(predictions):
-             values = [pred.get(col, 'N/A') for col in columns]
-             # 期待値や確率を小数点以下表示調整
-             for j, col_name in enumerate(columns):
-                 if col_name == "予測確率":
-                     try: values[j] = f"{float(values[j]):.4f}"
-                     except: pass
-                 elif col_name == "期待値":
-                     try: values[j] = f"{float(values[j]):.2f}"
-                     except: pass
-                 elif "オッズ" in col_name:
-                     try: values[j] = f"{float(values[j]):.1f}"
-                     except: pass
-
-             self.prediction_tree.insert("", "end", values=values, iid=f"pred_{i}") # iidを付与
-
-
-    def save_prediction_result(self):
-        """予測結果と推奨馬券をテキストファイルに保存"""
-        if not self.race_info_label.cget("text") or "未選択" in self.race_info_label.cget("text"):
-             messagebox.showwarning("保存エラー", "保存する予測結果がありません。\nレースを選択して予測を実行してください。")
-             return
-
-        save_dir = self.settings.get("results_dir", ".")
-        # ファイル名にレース情報を含める
-        race_info_str = self.race_info_label.cget("text").replace("レース情報: ", "").replace(" ", "_").replace("/", "-")
-        pred_type = self.prediction_type_var.get()
-        default_filename = f"prediction_{race_info_str}_{pred_type}_{datetime.now().strftime('%Y%m%d%H%M')}.txt"
-
-        file_path = filedialog.asksaveasfilename(
-            title="予測結果を保存",
-            initialdir=save_dir,
-            initialfile=default_filename,
-            defaultextension=".txt",
-            filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")]
-        )
-        if file_path:
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    # レース情報
-                    f.write(f"{self.race_info_label.cget('text')}\n")
-                    f.write(f"{self.race_details_label.cget('text')}\n\n")
-
-                    # 予測結果テーブルの内容
-                    f.write("--- 予測結果 ---\n")
-                    columns = self.prediction_tree["columns"]
-                    if columns:
-                         f.write("\t".join(columns) + "\n")
-                         for item_id in self.prediction_tree.get_children():
-                             values = self.prediction_tree.item(item_id)["values"]
-                             f.write("\t".join(map(str, values)) + "\n")
-                    else:
-                         f.write("予測結果はありません。\n")
-
-                    # 推奨馬券
-                    f.write("\n--- 推奨馬券 ---\n")
-                    f.write(self.recommendation_text.get(1.0, tk.END))
-
-                self.update_status(f"予測結果を保存しました: {file_path}")
-                messagebox.showinfo("予測結果保存", "予測結果を保存しました。")
-            except Exception as e:
-                 messagebox.showerror("保存エラー", f"予測結果の保存中にエラーが発生しました:\n{e}")
-                 self.update_status("エラー: 予測結果の保存失敗")
-
-
-    # --- Result Verification (Backtesting) ---
-    def run_result_analysis(self):
-        """結果分析（バックテスト）実行処理"""
-        if self.combined_data is None or self.combined_data.empty:
-             messagebox.showwarning("バックテスト実行", "分析対象のデータが読み込まれていません。\nデータ管理タブでデータを読み込んでください。")
-             return
-
-        # TODO: 予測モデルがロードされているか確認
-        # if self.model is None: ...
-
-        analysis_type = self.result_type_var.get() # 表示するグラフの種類
-        self.update_status(f"バックテスト実行中 ({analysis_type})...")
-
-        # バックテスト条件を取得
-        try:
-             start_date = f"{self.result_from_year_var.get()}-{self.result_from_month_var.get()}-01"
-             end_year = int(self.result_to_year_var.get())
-             end_month = int(self.result_to_month_var.get())
-             # 月末日を取得
-             import calendar
-             last_day = calendar.monthrange(end_year, end_month)[1]
-             end_date = f"{end_year:04d}-{end_month:02d}-{last_day:02d}"
-             start_dt = pd.to_datetime(start_date)
-             end_dt = pd.to_datetime(end_date)
-        except ValueError:
-            messagebox.showerror("日付エラー", "バックテスト期間の開始日または終了日の形式が正しくありません。")
-            self.update_status("エラー: 日付形式不正")
-            return
-
-        bet_types_to_run = {
-            "win": self.res_win_var.get(),
-            "place": self.res_place_var.get(),
-            "wide": self.res_wide_var.get(),
-            "uren": self.res_uren_var.get(),
-            "utan": self.res_utan_var.get(),
-            "sanfuku": self.res_sanfuku_var.get(),
-            "santan": self.res_santan_var.get(),
-        }
-
-        if not any(bet_types_to_run.values()):
-            messagebox.showwarning("バックテスト実行", "対象の馬券種が選択されていません。")
-            return
-
-        # バックテスト実行（スレッド）
-        self.run_in_thread(self._run_result_analysis_thread, start_dt, end_dt, bet_types_to_run, analysis_type)
-
+            values = (
+                item.get('Umaban', ''),
+                item.get('HorseName', ''),
+                item.get('SexAge', ''),
+                item.get('Load', ''),
+                item.get('JockeyName', ''),
+                item.get('Popular', ''),
+                item.get('Odds', ''),
+                item.get('近3走', ''),
+                prob_str,
+                item.get('shap_summary', 'N/A')
+            )
+            self.tree.insert('', 'end', values=values)
+    
     def _run_result_analysis_thread(self, start_dt, end_dt, bet_types_to_run, analysis_type):
         """結果分析（バックテスト）の非同期処理（完全版・省略なし）"""
         import time
