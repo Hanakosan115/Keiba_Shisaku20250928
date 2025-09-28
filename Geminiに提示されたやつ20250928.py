@@ -12,67 +12,50 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg # type: ignore
 import threading
 import random
 from datetime import datetime
-import requests # type: ignore # 追加
-from bs4 import BeautifulSoup # type: ignore # 追加
-import re # 追加
-import time # 追加
-import traceback # 追加
+import requests # type: ignore
+from bs4 import BeautifulSoup # type: ignore
+import re
+import time
+import traceback
 import time as _time
-from selenium import webdriver # type: ignore # 追加
-from selenium.webdriver.common.by import By # type: ignore # type: ignore # 追加
-from selenium.webdriver.support import expected_conditions as EC # type: ignore # 追加
-from selenium.webdriver.support.ui import WebDriverWait # type: ignore # type: ignore # 追加
-from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException # type: ignore # 追加
-from selenium.webdriver.chrome.service import Service as ChromeService # type: ignore # type: ignore # 追加
+from selenium import webdriver # type: ignore
+from selenium.webdriver.common.by import By # type: ignore
+from selenium.webdriver.support import expected_conditions as EC # type: ignore
+from selenium.webdriver.support.ui import WebDriverWait # type: ignore
+from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException # type: ignore
+from selenium.webdriver.chrome.service import Service as ChromeService # type: ignore
 
 # --- Matplotlibの日本語設定 (Windows向け) ---
-# 使用可能な日本語フォントを指定してください。
-# 例: 'Meiryo', 'Yu Gothic', 'MS Gothic', 'TakaoPGothic' (Linux)など
-# フォントがない場合は文字化けします。
 try:
-    plt.rcParams['font.family'] = 'Meiryo' # Windows標準のMeiryoを指定
-    plt.rcParams['font.sans-serif'] = ['Meiryo', 'Yu Gothic', 'MS Gothic'] # 代替フォント
-    plt.rcParams['axes.unicode_minus'] = False # 軸のマイナス記号を正しく表示
+    plt.rcParams['font.family'] = 'Meiryo'
+    plt.rcParams['font.sans-serif'] = ['Meiryo', 'Yu Gothic', 'MS Gothic']
+    plt.rcParams['axes.unicode_minus'] = False
 except Exception as e:
     print(f"日本語フォントの設定に失敗しました。グラフの日本語が文字化けする可能性があります。エラー: {e}", file=sys.stderr)
-    # フォントが見つからない場合の代替フォントを設定（なければデフォルト）
-    # plt.rcParams['font.family'] = 'sans-serif'
-
-
 
 class HorseRacingAnalyzerApp:
-        # --- Pickle化されたファイルの読み込み/保存用ヘルパーメソッド ---
+    # --- Pickle化されたファイルの読み込み/保存用ヘルパーメソッド ---
     def _load_pickle(self, file_path):
         """指定されたパスからpickleファイルをロードして返す"""
-        import pickle
-        import os # osモジュールをインポート
         if file_path and os.path.exists(file_path):
             try:
                 with open(file_path, 'rb') as f:
                     data = pickle.load(f)
                 print(f"INFO: Pickleファイルをロードしました: {file_path}")
                 return data
-            except pickle.UnpicklingError as e:
-                print(f"ERROR: Pickleファイルのデコードに失敗しました: {file_path}. 内容が破損しているか、pickle形式ではありません。 Error: {e}")
-            except EOFError as e:
-                print(f"ERROR: Pickleファイルが空か、途中で終了しています: {file_path}. Error: {e}")
             except Exception as e:
                 print(f"ERROR: Pickleファイルのロード中に予期せぬエラーが発生しました: {file_path}. Error: {e}")
         else:
             print(f"INFO: Pickleファイルが見つかりません: {file_path}")
-        return None # ロード失敗時は None を返す
+        return None
 
     def _save_pickle(self, data, file_path):
         """指定されたデータをpickleファイルとして保存する"""
-        import pickle
-        import os # osモジュールをインポート
         try:
-            # 保存先ディレクトリが存在しない場合は作成
             save_dir = os.path.dirname(file_path)
-            if save_dir and not os.path.exists(save_dir): # save_dirが空文字列でないことも確認
+            if save_dir and not os.path.exists(save_dir):
                 os.makedirs(save_dir)
                 print(f"INFO: ディレクトリを作成しました: {save_dir}")
-
             with open(file_path, 'wb') as f:
                 pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
             print(f"INFO: Pickleファイルに保存しました: {file_path}")
@@ -80,38 +63,30 @@ class HorseRacingAnalyzerApp:
         except Exception as e:
             print(f"ERROR: Pickleファイルへの保存中にエラーが発生しました: {file_path}. Error: {e}")
         return False
-    
-    # --- JRA競馬場リスト (クラス変数として定義しておくと便利) ---
+
     JRA_TRACKS = ["札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉"]
-    
+
     def __init__(self, root):
         self.root = root
         self.root.title("競馬データ分析ツール")
         self.root.geometry("1000x700")
         self.root.minsize(800, 600)
 
-        # アプリケーションのアイコン設定（icon.icoをスクリプトと同じ場所に置くか、絶対パスを指定）
-        # icon_path = os.path.join(os.path.dirname(__file__), "icon.ico") # スクリプトと同じ場所の場合
-        # if os.path.exists(icon_path):
-        #     self.root.iconbitmap(icon_path)
-        # else:
-        #     print("アイコンファイル 'icon.ico' が見つかりません。", file=sys.stderr)
-
         # スタイル設定
         self.style = ttk.Style()
-        self.style.theme_use('clam') # よりモダンなテーマを使用 (clam, alt, default, classic)
+        self.style.theme_use('clam')
         self.style.configure("TNotebook", background="#f0f0f0", tabmargins=[2, 5, 2, 0])
-        self.style.configure("TNotebook.Tab", padding=[10, 5], font=("Meiryo UI", 10)) # フォント指定
+        self.style.configure("TNotebook.Tab", padding=[10, 5], font=("Meiryo UI", 10))
         self.style.map("TNotebook.Tab", background=[("selected", "#ffffff"), ("active", "#e0e0e0")])
         self.style.configure("TFrame", background="#f0f0f0")
-        self.style.configure("TButton", font=("Meiryo UI", 10), padding=5) # フォント指定
-        self.style.configure("TLabel", font=("Meiryo UI", 10), background="#f0f0f0") # フォント指定
-        self.style.configure("TLabelFrame", font=("Meiryo UI", 11, "bold"), background="#f0f0f0") # フォント指定
-        self.style.configure("TLabelFrame.Label", font=("Meiryo UI", 11, "bold"), background="#f0f0f0") # フォント指定
-        self.style.configure("TEntry", font=("Meiryo UI", 10)) # フォント指定
-        self.style.configure("TCombobox", font=("Meiryo UI", 10)) # フォント指定
-        self.style.configure("Treeview", font=("Meiryo UI", 9), rowheight=25) # フォント指定
-        self.style.configure("Treeview.Heading", font=("Meiryo UI", 10, "bold")) # フォント指定
+        self.style.configure("TButton", font=("Meiryo UI", 10), padding=5)
+        self.style.configure("TLabel", font=("Meiryo UI", 10), background="#f0f0f0")
+        self.style.configure("TLabelFrame", font=("Meiryo UI", 11, "bold"), background="#f0f0f0")
+        self.style.configure("TLabelFrame.Label", font=("Meiryo UI", 11, "bold"), background="#f0f0f0")
+        self.style.configure("TEntry", font=("Meiryo UI", 10))
+        self.style.configure("TCombobox", font=("Meiryo UI", 10))
+        self.style.configure("Treeview", font=("Meiryo UI", 9), rowheight=25)
+        self.style.configure("Treeview.Heading", font=("Meiryo UI", 10, "bold"))
 
         # メインフレーム
         self.main_frame = ttk.Frame(self.root, padding="10 10 10 10")
@@ -133,9 +108,8 @@ class HorseRacingAnalyzerApp:
         self.tab_control.add(self.tab_data, text="データ管理")
         self.tab_control.add(self.tab_analysis, text="データ分析")
         self.tab_control.add(self.tab_prediction, text="予測")
-        self.tab_control.add(self.tab_results, text="結果検証") # より目的に合った名前に変更
+        self.tab_control.add(self.tab_results, text="結果検証")
         self.tab_control.add(self.tab_settings, text="設定")
-
         self.tab_control.pack(fill=tk.BOTH, expand=True)
 
         # ステータスバー
@@ -147,66 +121,54 @@ class HorseRacingAnalyzerApp:
         self.race_data = None
         self.horse_data = None
         self.result_data = None
-        self.combined_data = pd.DataFrame() # 分析や予測に使う結合済みデータ用
-        self.processed_data = pd.DataFrame() # ★ 前処理済みデータ用を追加
-        self.payout_data = []             # ★ 払い戻しデータも初期化
-        self.model = None # 予測モデル用
-        self.settings = {} # load_settingsで初期化される
-        
-        self.horse_details_cache = {}     # 馬詳細情報のキャッシュ用辞書
-        self.course_time_stats = {}       # コースタイム統計用辞書
-        self.father_stats = {}            # 父統計用辞書
-        self.mother_father_stats = {}     # 母父統計用辞書
-        self.gate_stats = {}              # 枠番統計用辞書
-        self.reference_times = {}         # 基準タイム用辞書
-        self.trained_model = None # 学習済みモデルを格納する属性 (self.model とは別に用意)
-        self.model_features = []  # 学習済みモデルが使用した特徴量リスト
-        self.imputation_values_ = {} # ★★★ 欠損値補完のための値を格納する辞書を初期化 ★★★
+        self.combined_data = pd.DataFrame()
+        self.processed_data = pd.DataFrame()
+        self.payout_data = []
+        self.model = None
+        self.settings = {}
+        self.horse_details_cache = {}
+        self.course_time_stats = {}
+        self.father_stats = {}
+        self.mother_father_stats = {}
+        self.gate_stats = {}
+        self.jockey_stats = {} # ★★★ 騎手統計用の辞書を追加 ★★★
+        self.reference_times = {}
+        self.trained_model = None
+        self.model_features = []
+        self.imputation_values_ = {}
 
-        # 設定ファイルのパスを決定（ensure_directories_existより前に実行）
+        # 設定ファイルのパスを決定
         self.app_data_dir = os.path.join(os.path.expanduser("~"), "HorseRacingAnalyzer")
         self.settings_file = os.path.join(self.app_data_dir, "settings.json")
 
-        # 設定の読み込み（デフォルト値の設定もここで行う）
+        # 設定の読み込み
         self.load_settings()
-        self.load_cache_from_file() # ← ★ ここでキャッシュを読み込む
+        self.load_cache_from_file()
         self.load_model_from_file()
         
         imputation_values_default_filename = "imputation_values.pkl"
-        # models_dir を使うのが適切か、data_dir を使うか、設定に合わせる
-        # ここでは settings から "models_dir" を参照し、なければ "data_dir"、それもなければ app_data_dir/models を使う
         models_base_dir = self.settings.get("models_dir", self.settings.get("data_dir", os.path.join(self.app_data_dir, "models")))
         default_imputation_path = os.path.join(models_base_dir, imputation_values_default_filename)
-        
-        imputation_values_path = self.settings.get("imputation_values_path", default_imputation_path) # 設定ファイルにパスがあればそれを使う
-        
-        loaded_imputation_values = self._load_pickle(imputation_values_path) # _load_pickle は既存のメソッドを想定
+        imputation_values_path = self.settings.get("imputation_values_path", default_imputation_path)
+        loaded_imputation_values = self._load_pickle(imputation_values_path)
         if loaded_imputation_values is not None and isinstance(loaded_imputation_values, dict):
             self.imputation_values_ = loaded_imputation_values
-            print(f"INFO: 欠損値補完のための値をロードしました: {imputation_values_path} ({len(self.imputation_values_)} 列分)")
         else:
-            # self.imputation_values_ は既に {} で初期化されているので、ここではログ出力のみでOK
             print(f"INFO: 欠損値補完ファイルが見つからないかロードに失敗 ({imputation_values_path})。学習時に新規作成されます。")
 
-        # ↓↓↓ ここから設定値を使ってクラス属性を定義 ↓↓↓
-        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-        self.REQUEST_TIMEOUT = 20 # 固定値でもOK
-        self.SELENIUM_WAIT_TIMEOUT = 30 # 固定値でもOK
-        # 設定ファイルの値を使うか、デフォルト値を使う
-        # self.settings.get(キー, デフォルト値) の形式
+        # スクレイピング設定
+        self.REQUEST_TIMEOUT = 20
+        self.SELENIUM_WAIT_TIMEOUT = 30
         self.SLEEP_TIME_PER_PAGE = float(self.settings.get("scrape_sleep_page", 0.7))
         self.SLEEP_TIME_PER_RACE = float(self.settings.get("scrape_sleep_race", 0.2))
-        self.USER_AGENT = self.settings.get("user_agent", 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36') # デフォルト値も設定
-        self.CHROME_DRIVER_PATH = self.settings.get("chrome_driver_path", None) # NoneならPATH検索
-        self.SAVE_DIRECTORY = self.settings.get("data_dir", ".") # 保存先はdata_dirを使う
+        self.USER_AGENT = self.settings.get("user_agent", 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36')
+        self.CHROME_DRIVER_PATH = self.settings.get("chrome_driver_path", None)
+        self.SAVE_DIRECTORY = self.settings.get("data_dir", ".")
         self.PROCESSED_LOG_FILE = os.path.join(self.SAVE_DIRECTORY, "processed_race_ids.log")
-        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-        # ↑↑↑ ここまで追加・確認 ↑↑↑
 
-        # Windows環境用のディレクトリ作成（設定読み込み後に行う）
         self.ensure_directories_exist()
 
-        # 各タブの内容を初期化
+        # 各タブの初期化
         self.init_home_tab()
         self.init_data_tab()
         self.init_analysis_tab()
@@ -214,115 +176,70 @@ class HorseRacingAnalyzerApp:
         self.init_results_tab()
         self.init_settings_tab()
 
-        # UIに設定値を反映
         self.reflect_settings_to_ui()
-    
-    # --- ★★★ キャッシュ保存用の一時的なメソッド ★★★ ---
+
     def save_cache_to_file(self, filename="horse_cache.pkl"):
         """現在の self.horse_details_cache の内容を指定ファイルに保存する"""
-        # 必要なライブラリをインポート
-        import pickle
-        import os
-        from tkinter import messagebox # メッセージボックス用にインポート
-
         if hasattr(self, 'horse_details_cache') and self.horse_details_cache:
-            # 保存先ディレクトリ (dataフォルダ推奨)
-            save_dir = self.settings.get("data_dir", "data") # dataフォルダをデフォルトに
+            save_dir = self.settings.get("data_dir", "data")
             if not os.path.exists(save_dir):
                 try:
                     os.makedirs(save_dir)
-                    print(f"INFO: Created directory {save_dir}")
                 except Exception as e:
-                    print(f"ERROR: Failed to create directory {save_dir}: {e}")
                     messagebox.showerror("エラー", f"ディレクトリ作成失敗: {save_dir}")
-                    save_dir = "." # 作成失敗時はカレントディレクトリ
-
+                    save_dir = "."
             filepath = os.path.join(save_dir, filename)
             try:
-                print(f"Attempting to save horse details cache to: {filepath}")
-                print(f"Number of items in cache: {len(self.horse_details_cache)}")
-                with open(filepath, 'wb') as f: # バイナリ書き込みモード ('wb')
-                    pickle.dump(self.horse_details_cache, f, pickle.HIGHEST_PROTOCOL) # pickleで辞書を保存
-                print(f"Successfully saved horse details cache to {filepath}")
-                # 保存完了をユーザーに通知 (メインスレッドで実行)
-                self.root.after(0, lambda path=filepath: messagebox.showinfo("キャッシュ保存完了", f"馬詳細キャッシュ ({len(self.horse_details_cache)}件) を保存しました:\n{path}"))
-                self.root.after(0, lambda path=filepath: self.update_status(f"キャッシュ保存完了: {os.path.basename(path)}"))
+                with open(filepath, 'wb') as f:
+                    pickle.dump(self.horse_details_cache, f, pickle.HIGHEST_PROTOCOL)
+                self.root.after(0, lambda: messagebox.showinfo("キャッシュ保存完了", f"馬詳細キャッシュ ({len(self.horse_details_cache)}件) を保存しました:\n{filepath}"))
             except Exception as e:
-                print(f"ERROR: Failed to save horse details cache to {filepath}: {e}")
-                self.root.after(0, lambda err=e, path=filepath: messagebox.showerror("キャッシュ保存エラー", f"キャッシュの保存中にエラーが発生しました:\n{path}\n{err}"))
-                self.root.after(0, lambda err=e: self.update_status(f"エラー: キャッシュ保存失敗 ({type(err).__name__})"))
+                self.root.after(0, lambda: messagebox.showerror("キャッシュ保存エラー", f"キャッシュの保存中にエラーが発生しました:\n{filepath}\n{e}"))
         else:
-            print("WARN: No horse details cache found or cache is empty. Nothing to save.")
             self.root.after(0, lambda: messagebox.showwarning("キャッシュ保存", "保存するキャッシュデータが見つかりません。"))
-    # --- ここまで一時的なメソッド ---
-    
-    # --- ★★★ キャッシュ読み込み用メソッド (新規追加) ★★★ ---
+
     def load_cache_from_file(self, filename="horse_cache.pkl"):
-        """指定されたファイルから馬詳細キャッシュを読み込み、self.horse_details_cache を初期化する"""
-        # 必要なライブラリをインポート (ファイル先頭推奨だが、ここでimport)
-        import pickle
-        import os
-
-        # キャッシュファイルのパスを取得 (保存場所と合わせる)
-        load_dir = self.settings.get("data_dir", "data") # 保存場所に合わせて "data" など
+        """指定されたファイルから馬詳細キャッシュを読み込む"""
+        load_dir = self.settings.get("data_dir", "data")
         filepath = os.path.join(load_dir, filename)
-
         if os.path.exists(filepath):
             try:
-                print(f"INFO: Loading horse details cache from: {filepath}")
-                with open(filepath, 'rb') as f: # バイナリ読み込みモード ('rb')
-                    # ★★★ self.horse_details_cache に読み込んだデータを代入 ★★★
+                with open(filepath, 'rb') as f:
                     self.horse_details_cache = pickle.load(f)
-                print(f"INFO: Successfully loaded {len(self.horse_details_cache)} items from cache.")
                 self.update_status(f"馬詳細キャッシュ読み込み完了 ({len(self.horse_details_cache)}件)")
             except Exception as e:
-                print(f"ERROR: Failed to load horse details cache from {filepath}: {e}")
-                # messageboxはメインスレッドから呼ぶべきだが、初期化中なのでprintのみ
-                # self.root.after(0, lambda err=e, path=filepath: messagebox.showerror("キャッシュ読込エラー", f"キャッシュファイルの読み込みに失敗しました:\n{path}\n{err}"))
-                self.horse_details_cache = {} # 読み込み失敗時は空にする
+                self.horse_details_cache = {}
                 self.update_status("警告: キャッシュ読み込み失敗")
         else:
-            print(f"INFO: Cache file not found at {filepath}. Initializing empty cache.")
-            self.horse_details_cache = {} # ファイルがなければ空で初期化
+            self.horse_details_cache = {}
             self.update_status("キャッシュファイルなし")
-    # --- ここまでキャッシュ読み込みメソッド ---
-    
-    # --- 部品関数1: 開催日取得 (requests) ---
+
     def get_kaisai_dates(self,year, month):
         """指定年月の開催日リストを取得"""
         url = f'https://race.netkeiba.com/top/calendar.html?year={year}&month={month}'
-        print(f"  開催日取得試行: {url}")
         headers = {'User-Agent': self.USER_AGENT}
         try:
-            time.sleep(self.SLEEP_TIME_PER_PAGE) # ★待機
+            time.sleep(self.SLEEP_TIME_PER_PAGE)
             r = requests.get(url, headers=headers, timeout=self.REQUEST_TIMEOUT)
-            r.raise_for_status() # HTTPエラーチェック
-            r.encoding = r.apparent_encoding # 文字化け対策
+            r.raise_for_status()
+            r.encoding = r.apparent_encoding
             soup = BeautifulSoup(r.content, 'lxml')
             kaisai_dates = []
-            # カレンダーテーブル内の開催日リンクを探す
             selector = '.Calendar_Table .Week td > a[href*="kaisai_date="]'
             for a_tag in soup.select(selector):
                 href = a_tag.get('href')
                 match = re.search(r'kaisai_date=(\d{8})', href)
                 if match:
                     kaisai_dates.append(match.group(1))
-            unique_dates = sorted(list(set(kaisai_dates)))
-            return unique_dates
-        except requests.exceptions.Timeout:
-            print(f"  タイムアウトエラー: {url}")
-        except requests.exceptions.RequestException as e:
-            print(f"  ページ取得エラー ({url}): {e}")
+            return sorted(list(set(kaisai_dates)))
         except Exception as e:
-            print(f"  予期せぬエラー (self,get_kaisai_dates) ({url}): {e}")
-        return [] # エラー時は空リスト
+            print(f"  開催日取得エラー ({url}): {e}")
+        return []
 
-    
-    # --- 部品関数2: レースID取得 (Selenium) ---
     def get_race_ids(self, date_str):
-        """指定日のレースIDリストと開催日をタプルのリストで取得"""
+        """指定日のレースIDリストを取得"""
         url = f'https://race.netkeiba.com/top/race_list.html?kaisai_date={date_str}'
-        driver = None # ★ 関数の最初に初期化
+        driver = None
         options = webdriver.ChromeOptions()
         options.add_argument(f'--user-agent={self.USER_AGENT}')
         options.add_argument('--headless')
@@ -332,280 +249,98 @@ class HorseRacingAnalyzerApp:
         options.add_argument("--log-level=3")
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         race_data_list = []
+        try:
+            if self.CHROME_DRIVER_PATH and os.path.exists(self.CHROME_DRIVER_PATH):
+                 service = ChromeService(executable_path=self.CHROME_DRIVER_PATH)
+                 driver = webdriver.Chrome(service=service, options=options)
+            else:
+                 driver = webdriver.Chrome(options=options)
+            
+            driver.get(url)
+            wait = WebDriverWait(driver, self.SELENIUM_WAIT_TIMEOUT)
+            wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, '#RaceTopRace, .RaceList_Box, .no_race, .alert')
+            ))
+            time.sleep(self.SLEEP_TIME_PER_PAGE / 2)
+            soup = BeautifulSoup(driver.page_source, 'lxml')
+            selector = '.RaceList_DataItem > a:first-of-type'
+            for a_tag in soup.select(selector):
+                href = a_tag.get('href')
+                if not href: continue
+                match = re.search(r'race_id=(\d+)', href)
+                if match:
+                    race_id = match.group(1)
+                    race_data_list.append((race_id, date_str))
+            return sorted(list(set(race_data_list)), key=lambda x: x[0])
+        except Exception as e:
+            print(f"  レースID取得エラー ({url}): {e}")
+        finally:
+            if driver:
+                driver.quit()
+        return []
 
-        try: # ★★★ メインのtryブロック開始 ★★★
-            # --- WebDriver初期化 ---
-            print(f"    DEBUG: Initializing WebDriver...")
-            try: # ★ WebDriver初期化専用のtry
-                if self.CHROME_DRIVER_PATH and os.path.exists(self.CHROME_DRIVER_PATH):
-                     service = ChromeService(executable_path=self.CHROME_DRIVER_PATH)
-                     driver = webdriver.Chrome(service=service, options=options)
-                elif self.CHROME_DRIVER_PATH:
-                     print(f"    警告: 指定されたChromeDriverが見つかりません...")
-                     driver = webdriver.Chrome(options=options)
-                else:
-                     print("    DEBUG: Initializing WebDriver using PATH...")
-                     driver = webdriver.Chrome(options=options)
-                print("    DEBUG: WebDriver initialization successful.")
-            except WebDriverException as e_init: # ★ WebDriver初期化失敗をここで捕捉
-                self.update_status(f"WebDriver初期化エラー: {date_str}")
-                print(f"  WebDriverエラー (初期化中): {e_init}")
-                print("  ChromeDriver/Chromeバージョン・パス設定を確認してください。")
-                traceback.print_exc()
-                driver = None # ★ 失敗したらNoneにする
-            except Exception as e_init_other: # ★ その他の初期化エラー
-                 self.update_status(f"WebDriver初期化中に予期せぬエラー: {date_str}")
-                 print(f"  予期せぬエラー (WebDriver初期化中): {e_init_other}")
-                 traceback.print_exc()
-                 driver = None
-
-            # --- WebDriver初期化成功後の処理 ---
-            if driver: # ★ driverがNoneでないことを確認
-                 print(f"    DEBUG: Driver instance created, getting URL: {url}")
-                 driver.get(url)
-                 wait = WebDriverWait(driver, self.SELENIUM_WAIT_TIMEOUT)
-                 print(f"    DEBUG: Waiting for elements...")
-                 try: # ★ wait.until を try...except で囲む
-                     wait.until(EC.presence_of_element_located(
-                         (By.CSS_SELECTOR, '#RaceTopRace, .RaceList_Box, .no_race, .alert')
-                     ))
-                     print(f"    DEBUG: Element found after wait!")
-                 except TimeoutException:
-                     print(f"  ★★★★★ TimeoutException occurred while waiting for elements on {url}")
-                     # タイムアウトしても finally で閉じるのでここでは何もしない（空リストが返る）
-                     # driver.quit() をここで呼ぶと finally で二重に呼ばれる可能性があるので注意
-
-                 # ★ wait.untilが成功しても失敗しても、ページソース取得と解析を試みる
-                 # （タイムアウトしても部分的に取得できる場合があるため）
-                 time.sleep(self.SLEEP_TIME_PER_PAGE / 2)
-                 print(f"    DEBUG: Page loaded (or timed out), getting source...")
-                 try:
-                     page_source = driver.page_source
-                     print(f"    DEBUG: Page source length: {len(page_source)}")
-                     soup = BeautifulSoup(page_source, 'lxml')
-                     print(f"    DEBUG: BeautifulSoup parsing done.")
-
-                     # --- レースID抽出処理 ---
-                     selector = '.RaceList_DataItem > a:first-of-type'
-                     print(f"    DEBUG: Selecting links with selector: {selector}")
-                     found_links = soup.select(selector)
-                     print(f"    DEBUG: Found {len(found_links)} links.")
-
-                     if not found_links:
-                        if soup.select_one('.no_race') or soup.select_one('.RaceList_Item02'):
-                            print(f"      情報: {date_str} にはレースがありませんでした。")
-                        else:
-                            print(f"    警告: レースIDリンクが見つかりませんでした。 ({date_str})")
-                     else:
-                         print(f"    DEBUG: Extracting race IDs...")
-                         for i, a_tag in enumerate(found_links):
-                             href = a_tag.get('href')
-                             if not href: continue
-                             match = re.search(r'race_id=(\d+)', href)
-                             if match:
-                                 race_id = match.group(1)
-                                 race_data_list.append((race_id, date_str))
-                             else:
-                                  match_alt = re.search(r'/race/result/(\d+)', href)
-                                  if match_alt:
-                                       race_id = match_alt.group(1)
-                                       race_data_list.append((race_id, date_str))
-                                  else:
-                                       print(f"      警告: レースIDの抽出失敗({i+1}): {href}")
-                         print(f"    DEBUG: Race ID extraction finished.")
-
-                 except Exception as e_parse:
-                      print(f"  ★★★★★ Error during page source processing or race ID extraction ({url}): {e_parse}")
-                      traceback.print_exc()
-
-            else: # driverがNoneの場合 (初期化失敗)
-                 print("    エラー: WebDriverの初期化に失敗したため、処理をスキップします。")
-
-        # ★★★ メインのtryブロックに対応するexceptとfinally ★★★
-        except Exception as e_main: # 予期せぬエラー全般
-            self.update_status(f"予期せぬエラー(get_race_ids): {date_str}")
-            print(f"  予期せぬエラー (get_race_ids 全体): {e_main}")
-            traceback.print_exc()
-        finally: # ★ 必ず実行されるブロック
-            if driver: # driverがNoneでなければ閉じる
-                try:
-                    driver.quit()
-                    print(f"    DEBUG: WebDriver quit.")
-                except Exception: pass
-
-        # ★ 最終的に race_data_list を処理して返す
-        unique_race_data = sorted(list(set(race_data_list)), key=lambda x: x[0])
-        return unique_race_data
-    
-# --- 部品関数3: レース結果テーブル取得 (レース番号抽出・インデント調整版) ---
     def get_result_table(self, race_id):
-        """レース結果ページ(db.netkeiba.com)からレース情報辞書と結果テーブルリストを取得"""
+        """レース結果ページからレース情報と結果テーブルを取得"""
         url = f'https://db.netkeiba.com/race/{race_id}/'
-        print(f"      結果取得試行: {url}")
         headers = {'User-Agent': self.USER_AGENT}
-        race_info_dict = {'race_id': race_id} # race_idは最初に入れておく
-        result_table = [] # ヘッダー行を含むリスト
-
+        race_info_dict = {'race_id': race_id}
+        result_table = []
         try:
             time.sleep(self.SLEEP_TIME_PER_RACE)
             r = requests.get(url, headers=headers, timeout=self.REQUEST_TIMEOUT)
             r.raise_for_status()
             r.encoding = r.apparent_encoding
             soup = BeautifulSoup(r.content, 'lxml')
-
-            # === レース情報の抽出 ===
-            try:
-                data_intro_div = soup.select_one('div.data_intro')
-                if data_intro_div:
-                    # --- レース番号取得を追加 ---
-                    race_num_dt = data_intro_div.select_one('dl.racedata dt')
-                    if race_num_dt:
-                        race_num_match = re.search(r'(\d+)', race_num_dt.get_text(strip=True))
-                        if race_num_match:
-                            race_info_dict['race_num'] = int(race_num_match.group(1))
-                        else:
-                            race_info_dict['race_num'] = None # 抽出失敗
-                    else:
-                        race_info_dict['race_num'] = None # dtタグが見つからない
-                    # --- 追加ここまで ---
-
-                    race_name_h1 = data_intro_div.select_one('h1')
-                    if race_name_h1:
-                        race_info_dict['race_name'] = race_name_h1.get_text(strip=True)
-
-                    details_span = data_intro_div.select_one('p span')
-                    if details_span:
-                        details_text = details_span.get_text(strip=True)
-                        parts = [p.strip() for p in details_text.split('/')]
-                        if len(parts) >= 1:
-                            course_text = parts[0]
-                            course_type_match = re.search(r'([芝ダ障])', course_text)
-                            turn_match = re.search(r'([左右内外])', course_text)
-                            distance_match = re.search(r'(\d+)m', course_text)
-                            race_info_dict['course_type'] = course_type_match.group(1) if course_type_match else None
-                            if turn_match:
-                                race_info_dict['turn_detail'] = turn_match.group(1)
-                                race_info_dict['turn'] = turn_match.group(1) if turn_match.group(1) in ['右', '左'] else None
-                            else:
-                                race_info_dict['turn_detail'] = None
-                                race_info_dict['turn'] = None
-                            race_info_dict['distance'] = int(distance_match.group(1)) if distance_match else None
-                            if not race_info_dict.get('course_type') or not race_info_dict.get('distance'): # キーが存在しない場合も考慮
-                                 race_info_dict['course_full'] = course_text
-                        if len(parts) >= 2 and ':' in parts[1]: race_info_dict['weather'] = parts[1].split(':', 1)[1].strip()
-                        if len(parts) >= 3 and ':' in parts[2]: race_info_dict['track_condition'] = parts[2].split(':', 1)[1].strip()
-                        if len(parts) >= 4 and ':' in parts[3]: race_info_dict['start_time'] = parts[3].split(':', 1)[1].strip()
-
-                small_text_p = soup.select_one('p.smalltxt')
-                if small_text_p:
-                    small_text = small_text_p.get_text(strip=True)
-                    date_match = re.search(r'(\d{4}年\d{1,2}月\d{1,2}日)', small_text)
-                    if date_match: race_info_dict['date'] = date_match.group(1)
-                    place_match = re.search(r'\d回(\S+?)\d日目', small_text)
-                    if place_match: race_info_dict['track_name'] = place_match.group(1)
-
-                print(f"      抽出したレース情報: {race_info_dict}")
-
-            except Exception as e_info:
-                print(f"      警告: レース情報の抽出中にエラー: {e_info}")
-                traceback.print_exc() # エラー詳細表示
-
-            # === 結果テーブルの取得処理 ===
-            table_tag = soup.select_one('table.race_table_01.nk_tb_common')
-            if not table_tag:
-                print(f"      エラー: 結果テーブルが見つかりません。 ({race_id})")
-                return race_info_dict, []
-
-            header_cells = []
-            horse_name_index = -1
-            umaban_index = -1
-            all_rows_in_table = table_tag.find_all('tr', recursive=False)
-            if not all_rows_in_table:
-                 print(f"      警告: 結果テーブル内に<tr>タグが見つかりません。({race_id})")
-                 return race_info_dict, []
-
-            header_row_tag = all_rows_in_table[0]
-            header_th_tags = header_row_tag.find_all('th', recursive=False)
-            if header_th_tags:
-                header_cells = [th.get_text(strip=True).replace('<br>', '') for th in header_th_tags]
-            else:
-                header_td_tags = header_row_tag.find_all('td', recursive=False)
-                if header_td_tags:
-                     print(f"      情報: ヘッダー行に th がなく td で取得します。")
-                     header_cells = [td.get_text(strip=True).replace('<br>', '') for td in header_td_tags]
             
-            # ↓↓↓ ヘッダー確認デバッグプリントを追加 ↓↓↓
-            # print(f"      DEBUG get_result_table: Raw Header Cells found: {header_cells}")
-            # ↑↑↑ 追加 ↑↑↑
+            data_intro_div = soup.select_one('div.data_intro')
+            if data_intro_div:
+                race_name_h1 = data_intro_div.select_one('h1')
+                if race_name_h1: race_info_dict['race_name'] = race_name_h1.get_text(strip=True)
+                details_span = data_intro_div.select_one('p span')
+                if details_span:
+                    details_text = details_span.get_text(strip=True)
+                    parts = [p.strip() for p in details_text.split('/')]
+                    if len(parts) >= 1:
+                        course_text = parts[0]
+                        course_type_match = re.search(r'([芝ダ障])', course_text)
+                        distance_match = re.search(r'(\d+)m', course_text)
+                        if course_type_match: race_info_dict['course_type'] = course_type_match.group(1)
+                        if distance_match: race_info_dict['distance'] = int(distance_match.group(1))
+                    if len(parts) >= 2: race_info_dict['weather'] = parts[1].split(':')[-1].strip()
+                    if len(parts) >= 3: race_info_dict['track_condition'] = parts[2].split(':')[-1].strip()
+            
+            small_text_p = soup.select_one('p.smalltxt')
+            if small_text_p:
+                small_text = small_text_p.get_text(strip=True)
+                date_match = re.search(r'(\d{4}年\d{1,2}月\d{1,2}日)', small_text)
+                if date_match: race_info_dict['date'] = date_match.group(1)
+                place_match = re.search(r'\d回(\S+?)\d日目', small_text)
+                if place_match: race_info_dict['track_name'] = place_match.group(1)
 
-            if not header_cells:
-                print(f"      エラー: ヘッダー行からセル(th/td)が取得できませんでした。({race_id})")
-                return race_info_dict, []
+            table_tag = soup.select_one('table.race_table_01.nk_tb_common')
+            if table_tag:
+                header_cells = [th.get_text(strip=True) for th in table_tag.select('tr:first-child th')]
+                horse_name_index = header_cells.index('馬名') if '馬名' in header_cells else -1
+                header_with_url = list(header_cells)
+                if horse_name_index != -1: header_with_url.insert(horse_name_index + 1, 'HorseName_url')
+                result_table.append(header_with_url)
 
-            try: horse_name_index = next(i for i, h in enumerate(header_cells) if '馬名' in h)
-            except StopIteration: print(f"      警告: ヘッダーに '馬名' 列が見つかりません。")
-            try: umaban_index = next(i for i, h in enumerate(header_cells) if '馬番' in h)
-            except StopIteration: print(f"      警告: ヘッダーに '馬番' 列が見つかりません。")
+                for tr_tag in table_tag.select('tr')[1:]:
+                    row_data = []
+                    td_tags = tr_tag.find_all('td', recursive=False)
+                    for i, td_tag in enumerate(td_tags):
+                        row_data.append(td_tag.get_text(strip=True))
+                        if i == horse_name_index:
+                            a_tag = td_tag.find('a')
+                            row_data.append(a_tag['href'].strip() if a_tag and a_tag.has_attr('href') else None)
+                    if len(row_data) == len(header_with_url):
+                        result_table.append(row_data)
 
-            header_with_url = list(header_cells)
-            if horse_name_index != -1: header_with_url.insert(horse_name_index + 1, 'HorseName_url')
-            result_table.append(header_with_url)
-
-            data_tr_tags = all_rows_in_table[1:]
-            if not data_tr_tags:
-                print(f"      警告: データ行(tr)が見つかりません。({race_id})")
-                return race_info_dict, result_table
-
-            print(f"      DEBUG: ヘッダー行数: 1, データ行数: {len(data_tr_tags)}")
-
-            for row_index, tr_tag in enumerate(data_tr_tags): # ★★★ enumerate を追加 ★★★
-                td_tags = tr_tag.find_all('td', recursive=False)
-                
-                # ↓↓↓ 各行の生データ確認プリントを追加する場所 ↓↓↓
-                current_row_texts = [td.get_text(strip=True) for td in td_tags]
-                row_data = [] # 各行のデータを格納するリストをここで初期化
-                print(f"      DEBUG get_result_table: Raw texts in row {row_index}: {current_row_texts}")
-                # ↑↑↑ ここです！ ↑↑↑
-                
-                # 元のヘッダー列数と比較（URL追加前）
-                if len(td_tags) != len(header_cells):
-                     print(f"      警告: データ行のセル数({len(td_tags)})がヘッダー列数({len(header_cells)})と不一致。スキップ。")
-                     continue
-
-                for i, td_tag in enumerate(td_tags):
-                    cell_span = td_tag.find('span')
-                    cell_text = cell_span.get_text(strip=True) if cell_span else td_tag.get_text(strip=True)
-                    row_data.append(cell_text)
-                    if i == horse_name_index: # 馬名列の場合のみURLを追加
-                        a_tag = td_tag.find('a')
-                        href = a_tag['href'].strip() if a_tag and a_tag.has_attr('href') else None
-                        row_data.append(href) # 必ず馬名テキストの直後に追加
-
-                # 列数が期待通りか最終確認 (URL追加後)
-                if len(row_data) == len(header_with_url):
-                     result_table.append(row_data)
-                else:
-                      print(f"      警告: 最終的なデータ行の列数({len(row_data)})が期待値({len(header_with_url)})と不一致。スキップ。")
-
-
-            print(f"      DEBUG get_result_table returning: info_keys={list(race_info_dict.keys())}, result_list_len={len(result_table)}")
-            if len(result_table) > 0: print(f"       Header: {result_table[0]}")
-            if len(result_table) > 1: print(f"       Data[0]: {result_table[1]}")
-
-            return race_info_dict, result_table
-
-        except requests.exceptions.Timeout:
-            print(f"      タイムアウトエラー: {url}")
-            return race_info_dict, []
-        except requests.exceptions.RequestException as e:
-            print(f"      ページ取得エラー ({url}): {e}")
-            return race_info_dict, []
         except Exception as e:
-            print(f"      ★★★★★ ERROR in get_result_table: {e}")
-            traceback.print_exc()
-            return race_info_dict, []
-  
-    # --- 部品関数4: 払い戻しテーブル取得 (requests) ---
+            print(f"      結果テーブル取得エラー ({url}): {e}")
+        return race_info_dict, result_table
+
+    
     def get_pay_table(self, race_id): # self を追加
         """払い戻しテーブルデータをリストのリストで取得"""
         url = f'https://race.netkeiba.com/race/result.html?race_id={race_id}' # race.netkeiba.com を使用
@@ -914,7 +649,7 @@ class HorseRacingAnalyzerApp:
 
         print(f"      出馬表データ取得完了: {len(horse_data_list)} 件の馬情報、レース共通情報が一部でも取得できたか: {any(v != 'N/A' and pd.notna(v) and v != '' for k, v in race_common_info.items() if k != 'race_id')}")
         return {'race_details': race_common_info, 'horse_list': horse_data_list}
-    
+
     # --- データ整形用ヘルパー関数 (shutuba_past.html 対応版) ---
     def format_shutuba_data(self, shutuba_data_list_of_dicts, race_id):
         """get_shutuba_tableの結果(辞書のリスト)をDataFrameに整形"""
@@ -1296,11 +1031,100 @@ class HorseRacingAnalyzerApp:
             horse_details['error'] = f'Unexpected Error: {e}'
 
         return horse_details
-   
+  
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    # ★ STEP 1.1：ここから騎手データ集計関数を追加 ★
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    def _calculate_jockey_stats(self):
+        """
+        読み込んだデータ全体から、騎手ごとに、
+        競馬場・コース種別・距離別の成績（複勝率など）を集計し、
+        クラス変数 self.jockey_stats に格納する。
+        """
+        print("騎手別のコース成績データを計算中...")
+        self.update_status("騎手成績データ計算中...")
+        start_calc_time = time.time()
+
+        self.jockey_stats = {} # 初期化
+
+        if self.combined_data is None or self.combined_data.empty:
+            print("警告: 騎手統計計算のためのデータがありません。")
+            self.update_status("騎手成績計算不可 (データなし)")
+            return
+
+        required_cols = ['JockeyName', 'track_name', 'course_type', 'distance', 'Rank']
+        if not all(col in self.combined_data.columns for col in required_cols):
+             missing = [c for c in required_cols if c not in self.combined_data.columns]
+             print(f"警告: 騎手統計計算に必要な列が不足しています: {missing}")
+             self.update_status(f"騎手成績計算不可 (列不足: {missing})")
+             return
+
+        df = self.combined_data.copy()
+
+        # データ前処理
+        df.dropna(subset=required_cols, inplace=True)
+        df = df[df['JockeyName'] != '']
+        df['JockeyName'] = df['JockeyName'].astype(str).str.strip()
+        df['track_name'] = df['track_name'].astype(str).str.strip()
+        df['course_type'] = df['course_type'].astype(str).str.strip()
+        df['distance_numeric'] = pd.to_numeric(df['distance'], errors='coerce')
+        df['Rank_numeric'] = pd.to_numeric(df['Rank'], errors='coerce')
+        df.dropna(subset=['distance_numeric', 'Rank_numeric'], inplace=True)
+        df['distance_int'] = df['distance_numeric'].astype(int)
+        df['Rank_int'] = df['Rank_numeric'].astype(int)
+
+        if df.empty:
+            print("警告: 騎手統計計算の対象となる有効なデータがありません。")
+            return
+
+        # 騎手、競馬場、コース、距離でグループ化し、成績を集計
+        try:
+            stats = df.groupby(['JockeyName', 'track_name', 'course_type', 'distance_int']).agg(
+                Runs=('Rank_int', 'size'),
+                Place3=('Rank_int', lambda x: (x <= 3).sum())
+            ).reset_index()
+
+            stats['Place3Rate'] = stats.apply(lambda r: r['Place3'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
+
+            # 辞書形式で格納 { 騎手名: { (競馬場, コース, 距離): {'Runs': N, 'Place3Rate': R}, ... }, ... }
+            jockey_stats_dict = {}
+            for _, row in stats.iterrows():
+                jockey = row['JockeyName']
+                track = row['track_name']
+                course = row['course_type']
+                distance = row['distance_int']
+                runs = row['Runs']
+                place3_rate = row['Place3Rate']
+
+                if jockey not in jockey_stats_dict:
+                    jockey_stats_dict[jockey] = {}
+                key = (track, course, distance)
+                
+                # 信頼性のため、最低騎乗回数を設ける (例: 5回以上)
+                if runs >= 5:
+                    jockey_stats_dict[jockey][key] = {'Runs': int(runs), 'Place3Rate': place3_rate}
+
+            self.jockey_stats = jockey_stats_dict
+
+            end_calc_time = time.time()
+            print(f"騎手別成績データの計算完了。{len(self.jockey_stats)} 人の騎手データを生成。({end_calc_time - start_calc_time:.2f}秒)")
+            self.update_status("騎手成績データ準備完了")
+
+        except Exception as e:
+            print(f"!!! Error during jockey stats calculation: {e}")
+            traceback.print_exc()
+            self.jockey_stats = {}
+            self.update_status("エラー: 騎手成績計算失敗")
+
+    # --- (中略) --- _calculate_sire_stats, _calculate_gate_stats などは変更なし ---
+    
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    # ★ STEP 1.3：ここから特徴量計算関数を修正 ★
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
     def calculate_original_index(self, horse_details, race_conditions):
         """
-        【最終強化版】馬の詳細情報とレース条件から、予測に使用する特徴量を計算・収集して返す。
-        TypeErrorを修正し、騎手・馬自身のコース適性を追加。
+        馬の詳細情報とレース条件から、予測に使用する特徴量を計算・収集して返す。
+        【騎手・馬のコース適性特徴量を追加】
         """
         features = {
             'Umaban': np.nan, 'HorseName': '', 'Sex': np.nan, 'Age': np.nan,
@@ -1309,25 +1133,19 @@ class HorseRacingAnalyzerApp:
             '近走1走前着順': np.nan, '近走2走前着順': np.nan, '近走3走前着順': np.nan,
             '着差_1走前': np.nan, '着差_2走前': np.nan, '着差_3走前': np.nan,
             '上がり3F_1走前': np.nan, '上がり3F_2走前': np.nan, '上がり3F_3走前': np.nan,
-            'タイム偏差値': np.nan,
-            '同コース距離最速補正': np.nan,
-            '基準タイム差': np.nan,
-            '基準タイム比': np.nan,
+            'タイム偏差値': np.nan, '同コース距離最速補正': np.nan,
+            '基準タイム差': np.nan, '基準タイム比': np.nan,
             '父同条件複勝率': 0.0, '父同条件N数': 0,
             '母父同条件複勝率': 0.0, '母父同条件N数': 0,
             '斤量絶対値': np.nan, '斤量前走差': np.nan,
             '馬体重絶対値': np.nan, '馬体重前走差': np.nan,
             '枠番': np.nan, '枠番_複勝率': 0.0, '枠番_N数': 0,
-            '負担率': np.nan,
-            '距離区分': None,
-            'race_class_level': np.nan,
+            '負担率': np.nan, '距離区分': None, 'race_class_level': np.nan,
             'time_dev_x_race_level': np.nan,
-            'is_transfer_from_local_1ago': 0,
-            'prev_race_track_type_1ago': 'Unknown',
-            'num_jra_starts': 0,
-            'jra_rank_1ago': np.nan,
-            'OddsShutuba': np.nan,
-            'NinkiShutuba': np.nan,
+            'is_transfer_from_local_1ago': 0, 'prev_race_track_type_1ago': 'Unknown',
+            'num_jra_starts': 0, 'jra_rank_1ago': np.nan,
+            'OddsShutuba': np.nan, 'NinkiShutuba': np.nan,
+            # ★★★ 新しい特徴量を追加 ★★★
             '騎手コース複勝率': 0.0, '騎手コースN数': 0,
             '馬コース複勝率': 0.0, '馬コースN数': 0,
             'error': None
@@ -1337,10 +1155,9 @@ class HorseRacingAnalyzerApp:
             features['error'] = "horse_details is not a dictionary"
             return 0.0, features
 
-        # --- 基本情報 ---
+        # 基本情報
         features['horse_id'] = str(horse_details.get('horse_id')).split('.')[0] if pd.notna(horse_details.get('horse_id')) else None
         features['Umaban'] = pd.to_numeric(horse_details.get('Umaban', horse_details.get('馬番')), errors='coerce')
-        features['HorseName'] = str(horse_details.get('HorseName', horse_details.get('馬名', '')))
         sex_age_str = str(horse_details.get('SexAge', horse_details.get('性齢', ''))).strip()
         if sex_age_str and re.match(r'([牡牝セせんセン騙])(\d+)', sex_age_str):
             match = re.match(r'([牡牝セせんセン騙])(\d+)', sex_age_str)
@@ -1348,23 +1165,20 @@ class HorseRacingAnalyzerApp:
             features['Sex'] = sex_map.get(match.group(1), np.nan)
             features['Age'] = pd.to_numeric(match.group(2), errors='coerce')
         features['Load'] = pd.to_numeric(horse_details.get('Load', horse_details.get('斤量')), errors='coerce')
-        features['JockeyName'] = str(horse_details.get('JockeyName', ''))
+        features['JockeyName'] = str(horse_details.get('JockeyName', '')) # ★騎手名を取得
         features['father'] = str(horse_details.get('father', ''))
         features['mother_father'] = str(horse_details.get('mother_father', ''))
-        features['枠番'] = pd.to_numeric(horse_details.get('Waku', horse_details.get('枠番')), errors='coerce')
 
-        # --- レース条件 ---
+        # レース条件
         target_course = race_conditions.get('CourseType', race_conditions.get('course_type'))
         target_distance_raw = race_conditions.get('Distance', race_conditions.get('distance'))
         target_track = race_conditions.get('TrackName', race_conditions.get('track_name'))
         target_distance_float = float(pd.to_numeric(target_distance_raw, errors='coerce')) if pd.notna(target_distance_raw) else None
 
-        distance_group = None
         if target_distance_float is not None:
             bins = [0, 1400, 1800, 2200, 2600, float('inf')]
             labels = ['1400m以下', '1401-1800m', '1801-2200m', '2201-2600m', '2601m以上']
-            distance_group = str(pd.cut([target_distance_float], bins=bins, labels=labels, right=True, include_lowest=True)[0])
-        features['距離区分'] = distance_group
+            features['距離区分'] = str(pd.cut([target_distance_float], bins=bins, labels=labels, right=True, include_lowest=True)[0])
         
         race_results_for_calc = horse_details.get('race_results', [])
         if not isinstance(race_results_for_calc, list): race_results_for_calc = []
@@ -1372,80 +1186,85 @@ class HorseRacingAnalyzerApp:
         features['race_class_level'] = self._get_race_class_level(str(race_conditions.get('RaceName', '')))
         
         try:
-            # === 近走情報 ===
+            # 近走情報など...
             for i in range(3):
                 if len(race_results_for_calc) > i and isinstance(race_results_for_calc[i], dict):
                     features[f'近走{i+1}走前着順'] = pd.to_numeric(race_results_for_calc[i].get('rank'), errors='coerce')
                     features[f'着差_{i+1}走前'] = pd.to_numeric(race_results_for_calc[i].get('diff'), errors='coerce')
                     features[f'上がり3F_{i+1}走前'] = pd.to_numeric(race_results_for_calc[i].get('agari'), errors='coerce')
 
-            # === タイム関連特徴量 ===
-            # ★★★ エラー修正箇所 ★★★
-            # time_secがNoneの場合を考慮した、より安全な計算方法に変更
-            baba_hosei_map = {'芝': {'良': 0.0, '稍重': 0.5, '重': 1.0, '不良': 1.5}, 'ダ': {'良': 0.0, '稍重': -0.3, '重': -0.8, '不良': -1.3}}
-            corrected_best_time = np.nan
-            if race_results_for_calc and target_course and pd.notna(target_distance_float):
-                corrected_times = []
-                for r in race_results_for_calc:
-                    time_sec = pd.to_numeric(r.get('time_sec'), errors='coerce')
-                    if isinstance(r, dict) and pd.notna(time_sec) and pd.to_numeric(r.get('distance'), errors='coerce') == target_distance_float and r.get('course_type') == target_course:
-                        hosei = baba_hosei_map.get(r.get('course_type'), {}).get(r.get('baba'), 0.0)
-                        corrected_times.append(time_sec - hosei)
-                if corrected_times:
-                    corrected_best_time = min(corrected_times)
-            features['同コース距離最速補正'] = round(corrected_best_time, 2) if pd.notna(corrected_best_time) else np.nan
-
-            if pd.notna(corrected_best_time) and hasattr(self, 'course_time_stats') and target_track and target_course:
-                stat_key = (str(target_track), str(target_course), int(target_distance_float))
-                course_stats = self.course_time_stats.get(stat_key)
-                if course_stats and pd.notna(course_stats.get('mean')) and pd.notna(course_stats.get('std')) and course_stats['std'] > 0:
-                    features['タイム偏差値'] = round(50 + 10 * (course_stats['mean'] - corrected_best_time) / course_stats['std'], 2)
-
-            # === 騎手のコース適性 ===
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            # ★ ここから新しい特徴量の計算ロジックを追加 ★
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            
+            # === 1. 騎手のコース適性 ===
             jockey_name_calc = features.get('JockeyName')
-            if (jockey_name_calc and target_track and target_course and pd.notna(target_distance_float) and hasattr(self, 'jockey_stats')):
+            if (jockey_name_calc and target_track and target_course and pd.notna(target_distance_float) and
+                hasattr(self, 'jockey_stats') and self.jockey_stats):
+                
                 jockey_data = self.jockey_stats.get(str(jockey_name_calc), {})
+                # 完全一致するキーを探す
                 cond_key = (str(target_track), str(target_course), int(target_distance_float))
+                
                 if cond_key in jockey_data:
                     stats = jockey_data[cond_key]
                     features['騎手コース複勝率'] = round(stats.get('Place3Rate', 0.0), 3)
                     features['騎手コースN数'] = int(stats.get('Runs', 0))
 
-            # === 馬自身のコース適性 ===
+            # === 2. 馬自身のコース適性 ===
             horse_course_runs = 0
             horse_course_place3 = 0
             if race_results_for_calc and target_track and target_course and pd.notna(target_distance_float):
                 for past_race in race_results_for_calc:
                     if isinstance(past_race, dict):
+                        # 過去レースの条件を取得
                         past_track = past_race.get('place')
                         past_course = past_race.get('course_type')
                         past_dist = pd.to_numeric(past_race.get('distance'), errors='coerce')
-                        if (str(past_track) == str(target_track) and str(past_course) == str(target_course) and past_dist == target_distance_float):
+                        
+                        # 今回のレース条件と一致するかチェック
+                        if (str(past_track) == str(target_track) and
+                            str(past_course) == str(target_course) and
+                            past_dist == target_distance_float):
+                            
                             horse_course_runs += 1
                             rank = pd.to_numeric(past_race.get('rank'), errors='coerce')
                             if pd.notna(rank) and rank <= 3:
                                 horse_course_place3 += 1
+            
             features['馬コースN数'] = horse_course_runs
             if horse_course_runs > 0:
                 features['馬コース複勝率'] = round(horse_course_place3 / horse_course_runs, 3)
-            
-            # === 血統のコース適性 ===
-            if features.get('father') and target_track and target_course and distance_group and hasattr(self, 'father_stats'):
-                sire_data = self.father_stats.get(str(features['father']), {})
-                cond_key = (str(target_track), str(target_course), str(distance_group))
-                if cond_key in sire_data:
-                    stats = sire_data[cond_key]
-                    features['父同条件複勝率'] = round(stats.get('Place3Rate', 0.0), 3)
-                    features['父同条件N数'] = int(stats.get('Runs', 0))
 
         except Exception as e_main_calc:
+            print(f"!!! ERROR: 特徴量計算メインブロックでエラー: {e_main_calc}")
             traceback.print_exc()
             features['error'] = f"CalcError: {type(e_main_calc).__name__}"
 
+        # --- 最終的な型担保とログ出力 ---
+        final_feature_log_display = {}
+        for f_key_disp, f_val_disp in features.items():
+            # Sex, 距離区分, prev_race_track_type_1ago はカテゴリカルなのでそのまま
+            if f_key_disp not in ['HorseName', 'JockeyName', 'TrainerName', 'father', 'mother_father', 'horse_id', 
+                                  '距離区分', 'prev_race_track_type_1ago', 'error', 'Sex']:
+                if not isinstance(f_val_disp, (int, float, np.integer, np.floating)) and pd.notna(f_val_disp):
+                    # print(f"WARN ({horse_id_for_log}): 特徴量 '{f_key_disp}' が最終的に非数値: {f_val_disp} (型: {type(f_val_disp)})。np.nan にします。")
+                    features[f_key_disp] = np.nan # モデル学習のため数値以外はNaNに
+            final_feature_log_display[f_key_disp] = features[f_key_disp]
+
+        print(f"--- 特徴量計算結果 (馬番 {umaban_for_log_debug}, horse_id {horse_id_for_log}) ---")
+        for k_log, v_log in final_feature_log_display.items():
+            if pd.isna(v_log) or (isinstance(v_log, float) and np.isnan(v_log)):
+                 print(f"  features['{k_log}']: nan")
+            elif isinstance(v_log, float):
+                 print(f"  features['{k_log}']: {v_log:.3f}")
+            else:
+                 print(f"  features['{k_log}']: {v_log}")
+        print("--------------------------------------------------")
+
         return 0.0, features
-      
-    # --- 持ちタイム指数用の統計計算メソッド (修正・完全版) ---
-    def _calculate_course_time_stats(self):
+
+    def _calculate_course_time_stats(self):    
         """
         読み込んだデータ全体から、競馬場・コース種別・距離ごとの
         馬場補正済み走破タイムの平均と標準偏差を計算し、クラス変数に格納する。
@@ -1626,59 +1445,67 @@ class HorseRacingAnalyzerApp:
             self.course_time_stats = {}
             self.update_status("エラー: タイム統計計算失敗")
     
-    def _calculate_sire_stats(self, sire_column='father'):
+    # --- 血統指数用の種牡馬成績集計メソッド (新規追加) ---
+    def _calculate_sire_stats(self, sire_column='father'): # 父(father) または 母父(mother_father) を指定
         """
-        【強化版】種牡馬ごとに、競馬場・コース種別・距離区分別の成績を集計する。
+        読み込んだデータ全体から、指定された種牡馬列ごとに、
+        コース種別・距離区分別の産駒成績（複勝率など）を集計し、クラス変数に格納する。
         """
-        stats_attr_name = f"{sire_column}_stats"
-        print(f"{sire_column} ごとの産駒成績データ（強化版）を計算中...")
+        stats_attr_name = f"{sire_column}_stats" # 格納するクラス変数名 (例: self.father_stats)
+        print(f"{sire_column} ごとの産駒成績データを計算中...")
         self.update_status(f"{sire_column} 成績データ計算中...")
         start_calc_time = time.time()
 
-        setattr(self, stats_attr_name, {})
+        # 計算結果を格納するクラス変数を初期化
+        setattr(self, stats_attr_name, {}) # 例: self.father_stats = {}
 
         if self.combined_data is None or self.combined_data.empty:
             print(f"警告: {stats_attr_name} 計算のためのデータがありません。")
+            self.update_status(f"{sire_column} 成績計算不可 (データなし)")
             return
 
-        required_cols = [sire_column, 'track_name', 'course_type', 'distance', 'Rank']
+        # 必要な列が存在するか確認
+        required_cols = [sire_column, 'course_type', 'distance', 'Rank']
         if not all(col in self.combined_data.columns for col in required_cols):
              missing = [c for c in required_cols if c not in self.combined_data.columns]
              print(f"警告: {stats_attr_name} 計算に必要な列が不足しています: {missing}")
+             self.update_status(f"{sire_column} 成績計算不可 (列不足: {missing})")
              return
 
         df = self.combined_data.copy()
 
-        # データ前処理
-        df.dropna(subset=required_cols, inplace=True)
-        df[sire_column] = df[sire_column].fillna('Unknown').astype(str).str.strip()
-        df = df[df[sire_column] != '']
-        df['track_name'] = df['track_name'].astype(str).str.strip()
+        # --- データ前処理 ---
+        df[sire_column] = df[sire_column].fillna('Unknown').astype(str).str.strip() # 種牡馬名を文字列化、欠損は'Unknown'
         df['course_type'] = df['course_type'].astype(str).str.strip()
         df['distance_numeric'] = pd.to_numeric(df['distance'], errors='coerce')
         df['Rank_numeric'] = pd.to_numeric(df['Rank'], errors='coerce')
-        df.dropna(subset=['distance_numeric', 'Rank_numeric'], inplace=True)
+        df.dropna(subset=[sire_column, 'course_type', 'distance_numeric', 'Rank_numeric'], inplace=True)
+        df = df[df[sire_column] != ''] # 空の種牡馬名を除外
         df['distance_numeric'] = df['distance_numeric'].astype(int)
         df['Rank_numeric'] = df['Rank_numeric'].astype(int)
+        # --------------------
 
-        # 距離区分を作成
+        # --- 距離区分を作成 ---
         bins = [0, 1400, 1800, 2200, 2600, float('inf')]
         labels = ['1400m以下', '1401-1800m', '1801-2200m', '2201-2600m', '2601m以上']
         df['DistanceGroup'] = pd.cut(df['distance_numeric'], bins=bins, labels=labels, right=True)
+        # --------------------
 
+        # --- 種牡馬、コース種別、距離区分でグループ化し、成績を集計 ---
         try:
-            # ★★★ グループ化のキーに 'track_name' を追加 ★★★
-            stats = df.groupby([sire_column, 'track_name', 'course_type', 'DistanceGroup'], observed=False).agg(
-                Runs=('Rank_numeric', 'size'),
-                Place3=('Rank_numeric', lambda x: (x <= 3).sum())
+            # observed=False にしないと、データがない組み合わせは結果に出てこない
+            stats = df.groupby([sire_column, 'course_type', 'DistanceGroup'], observed=False).agg(
+                Runs=('Rank_numeric', 'size'),         # 出走回数
+                Place3=('Rank_numeric', lambda x: (x <= 3).sum()) # 3着内回数
             ).reset_index()
 
+            # 複勝率を計算
             stats['Place3Rate'] = stats.apply(lambda r: r['Place3'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
 
+            # 結果を辞書形式で格納 { 種牡馬名: { (コース, 距離区分): {'Runs': N, 'Place3Rate': R}, ... }, ... }
             sire_stats_dict = {}
             for _, row in stats.iterrows():
                 sire = row[sire_column]
-                track = row['track_name']
                 course = row['course_type']
                 dist_group = row['DistanceGroup']
                 runs = row['Runs']
@@ -1686,22 +1513,24 @@ class HorseRacingAnalyzerApp:
 
                 if sire not in sire_stats_dict:
                     sire_stats_dict[sire] = {}
-                
-                # ★★★ キーを (競馬場, コース, 距離区分) に変更 ★★★
-                key = (track, course, dist_group)
-                if runs >= 5: # 最低出走回数
+                key = (course, dist_group)
+                # 信頼性のため、最低出走回数を設ける (例: 5回以上)
+                if runs >= 5:
                     sire_stats_dict[sire][key] = {'Runs': int(runs), 'Place3Rate': place3_rate}
+                # else: # 走回数が少ないデータは格納しない (あるいは別のデフォルト値を入れる)
+                #     sire_stats_dict[sire][key] = {'Runs': int(runs), 'Place3Rate': None} # 例: 複勝率はNone
 
-            setattr(self, stats_attr_name, sire_stats_dict)
+            setattr(self, stats_attr_name, sire_stats_dict) # 計算結果をクラス変数にセット
 
             end_calc_time = time.time()
             print(f"{sire_column} 別成績データの計算完了。{len(getattr(self, stats_attr_name))} 件の種牡馬データを生成。({end_calc_time - start_calc_time:.2f}秒)")
+            self.update_status(f"{sire_column} 成績データ準備完了")
 
         except Exception as e:
             print(f"!!! Error during sire stats calculation ({sire_column}): {e}")
             traceback.print_exc()
-            setattr(self, stats_attr_name, {})
-
+            setattr(self, stats_attr_name, {}) # エラー時は空にする
+            self.update_status(f"エラー: {sire_column} 成績計算失敗")
     # --- ★★★ 枠番別統計計算メソッド (新規追加) ★★★ ---
     def _calculate_gate_stats(self):
         """
@@ -1809,88 +1638,6 @@ class HorseRacingAnalyzerApp:
             self.gate_stats = {} # エラー時は空にする
             self.update_status("エラー: 枠番統計計算失敗")
     # --- ここまで枠番統計計算メソッド ---
-    
-    def _calculate_jockey_stats(self):
-        """
-        読み込んだデータ全体から、騎手ごとに、
-        競馬場・コース種別・距離別の成績（複勝率など）を集計し、
-        クラス変数 self.jockey_stats に格納する。
-        """
-        print("騎手別のコース成績データを計算中...")
-        self.update_status("騎手成績データ計算中...")
-        start_calc_time = time.time()
-
-        self.jockey_stats = {} # 初期化
-
-        if self.combined_data is None or self.combined_data.empty:
-            print("警告: 騎手統計計算のためのデータがありません。")
-            self.update_status("騎手成績計算不可 (データなし)")
-            return
-
-        # 必要な列を確認
-        required_cols = ['JockeyName', 'track_name', 'course_type', 'distance', 'Rank']
-        if not all(col in self.combined_data.columns for col in required_cols):
-             missing = [c for c in required_cols if c not in self.combined_data.columns]
-             print(f"警告: 騎手統計計算に必要な列が不足しています: {missing}")
-             self.update_status(f"騎手成績計算不可 (列不足: {missing})")
-             return
-
-        df = self.combined_data.copy()
-
-        # データ前処理
-        df.dropna(subset=required_cols, inplace=True)
-        df = df[df['JockeyName'] != '']
-        df['JockeyName'] = df['JockeyName'].astype(str).str.strip()
-        df['track_name'] = df['track_name'].astype(str).str.strip()
-        df['course_type'] = df['course_type'].astype(str).str.strip()
-        df['distance_numeric'] = pd.to_numeric(df['distance'], errors='coerce')
-        df['Rank_numeric'] = pd.to_numeric(df['Rank'], errors='coerce')
-        df.dropna(subset=['distance_numeric', 'Rank_numeric'], inplace=True)
-        df['distance_int'] = df['distance_numeric'].astype(int)
-        df['Rank_int'] = df['Rank_numeric'].astype(int)
-
-        if df.empty:
-            print("警告: 騎手統計計算の対象となる有効なデータがありません。")
-            return
-
-        # 騎手、競馬場、コース、距離でグループ化し、成績を集計
-        try:
-            stats = df.groupby(['JockeyName', 'track_name', 'course_type', 'distance_int']).agg(
-                Runs=('Rank_int', 'size'),
-                Place3=('Rank_int', lambda x: (x <= 3).sum())
-            ).reset_index()
-
-            stats['Place3Rate'] = stats.apply(lambda r: r['Place3'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
-
-            # 辞書形式で格納 { 騎手名: { (競馬場, コース, 距離): {'Runs': N, 'Place3Rate': R}, ... }, ... }
-            jockey_stats_dict = {}
-            for _, row in stats.iterrows():
-                jockey = row['JockeyName']
-                track = row['track_name']
-                course = row['course_type']
-                distance = row['distance_int']
-                runs = row['Runs']
-                place3_rate = row['Place3Rate']
-
-                if jockey not in jockey_stats_dict:
-                    jockey_stats_dict[jockey] = {}
-                key = (track, course, distance)
-                
-                # 信頼性のため、最低騎乗回数を設ける (例: 5回以上)
-                if runs >= 5:
-                    jockey_stats_dict[jockey][key] = {'Runs': int(runs), 'Place3Rate': place3_rate}
-
-            self.jockey_stats = jockey_stats_dict
-
-            end_calc_time = time.time()
-            print(f"騎手別成績データの計算完了。{len(self.jockey_stats)} 人の騎手データを生成。({end_calc_time - start_calc_time:.2f}秒)")
-            self.update_status("騎手成績データ準備完了")
-
-        except Exception as e:
-            print(f"!!! Error during jockey stats calculation: {e}")
-            traceback.print_exc()
-            self.jockey_stats = {}
-            self.update_status("エラー: 騎手成績計算失敗")
     
     # --- ★★★ 基準タイム計算メソッド (新規追加) ★★★ ---
     def _calculate_reference_times(self):
@@ -2583,11 +2330,13 @@ class HorseRacingAnalyzerApp:
         
         return features_df
     
+    # --- ★★★ モデル学習・評価メソッド ★★★ ---
     def train_and_evaluate_model(self, processed_data, target_column='target_rank_within_3'):
         """
-        【最終版】LightGBMモデルの学習、評価、保存を行う。
-        学習完了後、アプリ内のモデルと特徴量リストを即時更新する。
+        LightGBMモデルの学習、評価、保存、キャリブレーションプロット作成を行う。
+        データ型の前処理を追加。
         """
+        # --- 必要なライブラリをインポート (ファイル冒頭にあるか確認) ---
         import pandas as pd
         import numpy as np
         import lightgbm as lgb
@@ -2595,9 +2344,11 @@ class HorseRacingAnalyzerApp:
         from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, confusion_matrix
         from sklearn.calibration import CalibrationDisplay
         import matplotlib.pyplot as plt
+        # import joblib # joblibは現在未使用のようですが、pickleの代わりにも使えます
         import os
         import traceback
         from tkinter import messagebox
+        # --- ここまでインポート ---
 
         try:
             self.update_status("モデル学習と評価を開始します...")
@@ -2605,85 +2356,299 @@ class HorseRacingAnalyzerApp:
 
             if processed_data is None or processed_data.empty:
                 messagebox.showerror("学習エラー", "学習に使用するデータがありません。")
+                self.update_status("エラー: 学習データなし")
                 return
 
+            # 特徴量 (X) とターゲット (y) を準備
+            # target_columnと、予測に使うべきでない列を除外
             cols_to_drop_for_X = [
-                target_column, 'race_id', 'horse_id', 'HorseName', 'date',
-                'Time', 'Rank','Diff', 'Ninki', 'Odds', 'Odds_x', 'Odds_y',
-                'Umaban', 'Waku', 'SexAge', 'JockeyName', 'TrainerName',
-                'father', 'mother_father', 'WeightInfo', 'WeightInfoShutuba',
-                'error'
+                target_column, 'race_id', 'horse_id', 'HorseName', 'date', # 基本ID・結果・日付系
+                'Time', 'Rank','Diff', 'Ninki', 'Odds', 'Odds_x', 'Odds_y', # レース結果やオッズそのもの
+                'Umaban', 'Waku', # 枠番は統計特徴量(枠番_複勝率)を使う想定
+                'SexAge', 'JockeyName', 'TrainerName', # これらも統計特徴量化を推奨
+                'father', 'mother_father', # これらも統計特徴量化を推奨
+                'WeightInfo', 'WeightInfoShutuba', # 馬体重(絶対値), 馬体重前走差 になっているはず
+                # ターゲットになりうる列 (もしあれば)
+                'target_exacta', 'target_quinella', 'target_trifecta', 
+                'payout_win', 'payout_place', 'payout_exacta', 'payout_quinella', 'payout_trifecta',
+                'text_race_results', # テキストデータ
+                'error' # エラーフラグも特徴量によっては不要
             ]
+            # processed_dataに実際に存在する列のみをドロップ対象にする
             existing_cols_to_drop_for_X = [col for col in cols_to_drop_for_X if col in processed_data.columns]
+            
             X = processed_data.drop(columns=existing_cols_to_drop_for_X, errors='ignore').copy()
+            
+            if target_column not in processed_data.columns:
+                messagebox.showerror("学習エラー", f"ターゲット列 '{target_column}' がデータに存在しません。")
+                self.update_status(f"エラー: ターゲット列 '{target_column}' なし")
+                return
             y = processed_data[target_column].astype(int)
 
-            # --- データ型前処理と欠損値補完 ---
+            # 初期特徴量リストの保存 (get_dummies前)
+            # self.model_features は get_dummies 後の最終的な特徴量リストにすべきなので、
+            # ここでは一時的なリストとして保持するか、get_dummies後に再設定します。
+            # print(f"初期学習特徴量 (get_dummies前) ({len(X.columns)}個): {X.columns.tolist()}") # ログ出力は変更
+
+            # --- ★★★ データ型前処理と欠損値処理 ★★★ ---
+            print("特徴量データのデータ型前処理と欠損値補完を開始します...")
+            
+            # ★★★ 修正点: prev_race_track_type_1ago をダミー変数化 ★★★
             if 'prev_race_track_type_1ago' in X.columns:
-                X = pd.get_dummies(X, columns=['prev_race_track_type_1ago'], prefix='prev_track_type', dummy_na=True)
-            
-            # カテゴリカル変数を数値にマッピング
+                print("  処理中: prev_race_track_type_1ago 列のダミー変数化")
+                try:
+                    X = pd.get_dummies(X, columns=['prev_race_track_type_1ago'], prefix='prev_track_type', dummy_na=True)
+                    # dummy_na=True にすると、'prev_track_type_nan' のような列が作られる
+                    print(f"    prev_race_track_type_1ago をダミー変数化しました。新しい列(一部): {[col for col in X.columns if 'prev_track_type' in col][:5]}")
+                except Exception as e_dummy:
+                    print(f"    エラー: prev_race_track_type_1ago のダミー変数化に失敗: {e_dummy}")
+                    # エラーが発生した場合、この列を除外するか、処理を中断するか検討
+                    X = X.drop(columns=['prev_race_track_type_1ago'], errors='ignore')
+                    print("    prev_race_track_type_1ago 列を除外して処理を続行します。")
+            # ★★★ 修正ここまで ★★★
+
+            # 1. カテゴリカル変数の処理 (Sex, 距離区分など)
             if 'Sex' in X.columns:
+                print("  処理中: Sex列")
+                # calculate_original_indexで数値(0,1,2)に変換済みのはずなので、ここでは型確認と欠損値処理
                 X['Sex'] = pd.to_numeric(X['Sex'], errors='coerce')
+                sex_fill_value = X['Sex'].mode()[0] if not X['Sex'].mode().empty else -1 # 最頻値、なければ-1
+                self.imputation_values_['Sex'] = sex_fill_value # 補完値を保存
+                X['Sex'] = X['Sex'].fillna(sex_fill_value)
+                print(f"    Sex列のユニーク値 (処理後): {X['Sex'].unique()}")
+
             if '距離区分' in X.columns:
-                distance_map = {'1400m以下': 0, '1401-1800m': 1, '1801-2200m': 2, '2201-2600m': 3, '2601m以上': 4}
-                X['距離区分'] = X['距離区分'].map(distance_map)
+                print("  処理中: 距離区分列")
+                # calculate_original_index でカテゴリ文字列が設定される想定
+                distance_category_mapping = {
+                    '1400m以下': 0, '1401-1800m': 1, '1801-2200m': 2, 
+                    '2201-2600m': 3, '2601m以上': 4
+                }
+                X['距離区分'] = X['距離区分'].map(distance_category_mapping)
+                dist_fill_value = X['距離区分'].mode()[0] if not X['距離区分'].mode().empty else -1 # 最頻値、なければ-1
+                self.imputation_values_['距離区分'] = dist_fill_value # 補完値を保存
+                X['距離区分'] = X['距離区分'].fillna(dist_fill_value)
+                print(f"    距離区分列のユニーク値 (マッピング後): {X['距離区分'].unique()}")
 
-            # 欠損値補完
-            for col in X.select_dtypes(include=np.number).columns:
-                if X[col].isnull().any():
-                    mean_val = X[col].mean()
-                    self.imputation_values_[col] = 0 if pd.isna(mean_val) else mean_val
-                    X[col] = X[col].fillna(self.imputation_values_[col])
+            # 2. 数値であるべき特徴量の欠損値処理と型変換
+            #    calculate_original_index で数値型になっているはずだが、念のため
+            #    'error'列はここでは処理しない (特徴量リストに含まれない想定)
 
-            # オブジェクト型が残っていたら数値に変換
-            for col in X.select_dtypes(include=['object']).columns:
-                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+            # 3. 全ての数値列に対して欠損値を平均値で補完
+            print("  数値列の欠損値を学習時の平均値で補完/0で補完します...")
+            if not hasattr(self, 'imputation_values_') or not self.imputation_values_:
+                 self.imputation_values_ = {} # 初回学習などのために初期化
 
-            # ★★★【重要】学習に使用した最終的な特徴量リストをここで確定 ★★★
-            final_feature_list = list(X.columns)
+            nan_count_before_numeric_fill = X.isnull().sum().sum()
+            cols_filled_with_mean = []
+            cols_filled_with_zero = []
+
+            for col in X.columns: # X.columns は get_dummies 後
+                if X[col].isnull().any(): # 欠損値がある列のみ処理
+                    # まず数値型に強制変換 (文字列などが混入している場合NaNになる)
+                    X.loc[:, col] = pd.to_numeric(X[col], errors='coerce')
+                    
+                    # 学習時(初回)の補完値計算と保存
+                    if col not in self.imputation_values_:
+                        mean_val = X[col].mean()
+                        if pd.isna(mean_val): # 列全体がNaNまたは全て数値変換失敗
+                            self.imputation_values_[col] = 0 # フォールバックとして0
+                            print(f"    警告: 列 '{col}' の平均値が計算できませんでした。学習時の補完値を0とします。")
+                        else:
+                            self.imputation_values_[col] = mean_val
+                    
+                    # 保存された補完値で埋める
+                    fill_value_for_col = self.imputation_values_[col]
+                    X.loc[:, col] = X[col].fillna(fill_value_for_col)
+                    
+                    if fill_value_for_col == 0 and pd.isna(X[col].mean()): # 0で補完したが元々平均が計算不能だった場合
+                        cols_filled_with_zero.append(col)
+                    else:
+                        cols_filled_with_mean.append(col)
+                else: # 欠損値がない列も、数値型であることを確認し、学習時の平均値を記録
+                    X.loc[:, col] = pd.to_numeric(X[col], errors='coerce')
+                    if col not in self.imputation_values_:
+                         if X[col].isnull().all(): # 全てNaNになった場合
+                             self.imputation_values_[col] = 0
+                             print(f"    警告: 列 '{col}' は全て数値変換に失敗しました。学習時の補完値を0とします。")
+                         else:
+                             self.imputation_values_[col] = X[col].mean() # (NaN除去後の)平均
             
-            # 分割前に、学習時になかった列（ダミー変数など）をテストデータにも反映させるため
-            # 訓練データとテストデータに分割
+            if cols_filled_with_mean: print(f"    平均値で補完した列: {cols_filled_with_mean}")
+            if cols_filled_with_zero: print(f"    0で補完した列: {cols_filled_with_zero}")
+            
+            nan_count_after_numeric_fill = X.isnull().sum().sum()
+            print(f"  数値列補完前の欠損値総数: {nan_count_before_numeric_fill}, 補完後: {nan_count_after_numeric_fill}")
+
+            if nan_count_after_numeric_fill > 0:
+                print(f"!!! 重大な警告: 欠損値補完後もNaNが残っています: {X.columns[X.isnull().any()].tolist()}")
+                # さらに強制的に0で埋めるか、エラーにするか
+                X = X.fillna(0)
+                print("    残存NaNを0で強制的に補完しました。")
+
+
+            # 最終確認: object型が残っていないか
+            object_cols_remaining = X.select_dtypes(include=['object']).columns.tolist()
+            if object_cols_remaining:
+                print(f"!!! 重大な警告: 処理後もobject型の列が残っています: {object_cols_remaining}。LightGBM学習時にエラーが発生します。")
+                for obj_col in object_cols_remaining: print(f"    '{obj_col}' の値のサンプル: {X[obj_col].unique()[:5]}")
+                messagebox.showerror("データ型エラー", f"以下の特徴量が数値に変換されていません: {', '.join(object_cols_remaining)}")
+                self.update_status(f"エラー: object型が残存")
+                return
+            
+            self.model_features = list(X.columns) # ★★★ get_dummies 後の最終的な特徴量リストを保存 ★★★
+            print(f"データ型処理後の最終的な学習特徴量 ({len(self.model_features)}個)") # ログ出力変更
+            # --- ★★★ データ型前処理と欠損値処理ここまで ★★★ ---
+
+
+            if X.empty or len(X) != len(y):
+                messagebox.showerror("学習エラー", "特徴量データまたはターゲットデータが空、または行数が一致しません。")
+                self.update_status("エラー: 学習データ準備失敗")
+                return
+
+            print(f"モデル学習用データの準備完了。Shape X: {X.shape}, y: {y.shape}")
+
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+            print(f"データを分割しました: 訓練データ {len(X_train)}件, テストデータ {len(X_test)}件")
 
-            print(f"モデル学習用データの準備完了。特徴量: {len(final_feature_list)}個, Shape X: {X.shape}, y: {y.shape}")
-
+            print("LightGBMモデルを定義します...")
             lgbm_params = {
                 'objective': 'binary', 'metric': 'auc', 'boosting_type': 'gbdt',
                 'n_estimators': 1000, 'learning_rate': 0.05, 'num_leaves': 31,
-                'random_state': 42, 'n_jobs': -1, 'verbose': -1,
+                'max_depth': -1, 'min_child_samples': 20, 'subsample': 0.8,
+                'colsample_bytree': 0.8, 'random_state': 42, 'n_jobs': -1, 'verbose': -1,
             }
-            model = lgb.LGBMClassifier(**lgbm_params)
+            self.trained_model = lgb.LGBMClassifier(**lgbm_params)
 
             print("モデルの学習を開始します...")
-            model.fit(X_train, y_train,
-                      eval_set=[(X_test, y_test)],
-                      eval_metric='auc',
-                      callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=-1)])
+            self.trained_model.fit(X_train, y_train,
+                                   eval_set=[(X_test, y_test)],
+                                   eval_metric='auc',
+                                   callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=-1)])
             print("モデルの学習が完了しました。")
+            self.update_status("モデル学習完了。評価中...")
+            print("学習済みモデルを self.trained_model に保存しました。")
 
-            # ★★★【重要】学習完了後、アプリ内のモデルと特徴量リストを即時更新 ★★★
-            self.trained_model = model
-            self.model_features = final_feature_list
-            print(f"アプリケーション内のモデルを更新しました。特徴量数: {len(self.model_features)}")
+            # ... (以降のモデル保存、評価、プロット部分は前回提示したコードと同じなので省略しません) ...
+            model_save_dir = self.settings.get("models_dir") # settings.json の "models_dir" を使う
+            if not model_save_dir or not os.path.isdir(os.path.expanduser(model_save_dir)):
+                default_models_dir = os.path.join(self.app_data_dir, "models")
+                print(f"WARN: settingsのmodels_dir '{model_save_dir}' が無効または未設定のため、保存先を {default_models_dir} に設定します。")
+                model_save_dir = default_models_dir
+            
+            if not os.path.exists(os.path.expanduser(model_save_dir)):
+                try:
+                    os.makedirs(os.path.expanduser(model_save_dir))
+                    print(f"INFO: 保存用ディレクトリを作成しました: {os.path.expanduser(model_save_dir)}")
+                except Exception as e_mkdir_model:
+                    print(f"ERROR: モデル保存ディレクトリ作成失敗 ({os.path.expanduser(model_save_dir)}): {e_mkdir_model}")
+                    print(f"WARN: 保存先をカレントディレクトリに変更します。")
+                    model_save_dir = "." 
+            else:
+                 model_save_dir = os.path.expanduser(model_save_dir)
 
-            # モデルと関連ファイルの保存
-            model_save_dir = self.settings.get("models_dir", os.path.join(self.app_data_dir, "models"))
-            os.makedirs(os.path.expanduser(model_save_dir), exist_ok=True)
-            self._save_pickle(self.trained_model, os.path.join(model_save_dir, "trained_lgbm_model.pkl"))
-            self._save_pickle(self.model_features, os.path.join(model_save_dir, "model_features.pkl"))
-            self._save_pickle(self.imputation_values_, os.path.join(model_save_dir, "imputation_values.pkl"))
+            model_filename = "trained_lgbm_model.pkl"
+            features_filename = "model_features.pkl"
+            imputation_filename = "imputation_values.pkl" # ★★★ 補完値ファイル名 ★★★
 
-            # モデルの評価
+            model_filepath = os.path.join(model_save_dir, model_filename)
+            features_filepath = os.path.join(model_save_dir, features_filename)
+            imputation_filepath = os.path.join(model_save_dir, imputation_filename) # ★★★
+
+            save_success_model = False
+            save_success_features = False
+            save_success_imputation = False # ★★★
+
+            # モデルの保存 (pickleを使用)
+            if self.trained_model is not None:
+                save_success_model = self._save_pickle(self.trained_model, model_filepath)
+            else:
+                print("WARN: self.trained_model が None のため、モデルの保存をスキップしました。")
+
+            # 特徴量リストの保存 (pickleを使用)
+            if self.model_features: # self.model_features は get_dummies 後に更新されている
+                save_success_features = self._save_pickle(self.model_features, features_filepath)
+            else:
+                print("WARN: self.model_features が空のため、特徴量リストの保存をスキップしました。")
+            
+            # ★★★ 欠損値補完のための値の保存 ★★★
+            if hasattr(self, 'imputation_values_') and self.imputation_values_:
+                save_success_imputation = self._save_pickle(self.imputation_values_, imputation_filepath)
+                if not save_success_imputation:
+                     print(f"ERROR: imputation_values_ の保存に失敗しました。 Path: {imputation_filepath}")
+            else:
+                print("WARN: self.imputation_values_ が存在しないか空のため、補完値の保存をスキップしました。")
+            # ★★★ 修正ここまで ★★★
+
+            # settings ファイルにパスを記録 (保存が成功した場合のみ)
+            settings_updated = False
+            if save_success_model:
+                if self.settings.get("trained_model_path") != model_filepath:
+                    self.settings["trained_model_path"] = model_filepath
+                    settings_updated = True
+            if save_success_features:
+                if self.settings.get("model_features_path") != features_filepath:
+                    self.settings["model_features_path"] = features_filepath
+                    settings_updated = True
+            if save_success_imputation: # ★★★
+                if self.settings.get("imputation_values_path") != imputation_filepath:
+                    self.settings["imputation_values_path"] = imputation_filepath
+                    settings_updated = True
+            
+            if settings_updated: # settingsの内容が実際に更新された場合のみ保存
+                self.save_settings()
+
+            print("テストデータで予測を実行します...")
             y_pred_proba = self.trained_model.predict_proba(X_test)[:, 1]
+            y_pred_binary = (y_pred_proba >= 0.5).astype(int) # 閾値0.5で2値化
+            print("モデルの評価を行います...")
             auc = roc_auc_score(y_test, y_pred_proba)
-            print(f"  AUC Score: {auc:.4f}")
+            accuracy = accuracy_score(y_test, y_pred_binary)
+            precision = precision_score(y_test, y_pred_binary, zero_division=0)
+            recall = recall_score(y_test, y_pred_binary, zero_division=0)
+            cm = confusion_matrix(y_test, y_pred_binary)
+            eval_results_text = (
+                f"モデル評価結果 (テストデータ):\n\nAUC Score: {auc:.4f}\n\n"
+                f"--- 閾値 0.5 での評価 ---\nAccuracy (正解率): {accuracy:.4f}\n"
+                f"Precision (適合率): {precision:.4f}\nRecall (再現率): {recall:.4f}\n\n"
+                f"Confusion Matrix:\n{cm}\n(行: 実際の0/1, 列: 予測の0/1)"
+            )
+            print(f"  AUC Score: {auc:.4f}\n  Accuracy (Threshold 0.5): {accuracy:.4f}\n  Precision (Threshold 0.5): {precision:.4f}\n  Recall (Threshold 0.5): {recall:.4f}\n  Confusion Matrix (Threshold 0.5):\n{cm}")
 
+            try:
+                print("キャリブレーションプロットを作成します...")
+                fig, ax = plt.subplots()
+                CalibrationDisplay.from_estimator(self.trained_model, X_test, y_test, n_bins=10, ax=ax, strategy='uniform')
+                ax.set_title('キャリブレーションプロット (テストデータ)')
+                ax.set_xlabel('予測された3着以内確率の平均値'); ax.set_ylabel('観測された3着以内率')
+                plt.grid(True)
+                plot_save_dir = self.settings.get("plot_dir", self.settings.get("data_dir", "."))
+                if not os.path.exists(plot_save_dir):
+                    try: os.makedirs(plot_save_dir)
+                    except Exception as e_mkdir_plot:
+                        print(f"WARN: プロット保存ディレクトリ ({plot_save_dir}) 作成失敗: {e_mkdir_plot}"); plot_save_dir = "." 
+                plot_filename = "calibration_plot.png"
+                plot_filepath = os.path.join(plot_save_dir, plot_filename)
+                plt.savefig(plot_filepath)
+                print(f"キャリブレーションプロットを保存しました: {plot_filepath}")
+                eval_results_text_with_plot_path = f"{eval_results_text}\n\nキャリブレーションプロットが {plot_filepath} として保存されました。"
+                self.root.after(0, lambda: messagebox.showinfo("モデル評価結果", eval_results_text_with_plot_path))
+                plt.close(fig)
+            except PermissionError as e_perm:
+                print(f"!!! ERROR during calibration plot creation (PermissionError): {e_perm}"); traceback.print_exc()
+                self.root.after(0, lambda: messagebox.showerror("プロット保存エラー", f"キャリブレーションプロットの保存中にアクセス権限エラーが発生しました。\n詳細: {e_perm}\n\n{eval_results_text}"))
+            except Exception as e_plot:
+                print(f"!!! ERROR during calibration plot creation: {e_plot}"); traceback.print_exc()
+                self.root.after(0, lambda: messagebox.showerror("プロット作成エラー", f"キャリブレーションプロットの作成・保存中にエラー:\n{e_plot}\n\n{eval_results_text}"))
+            self.update_status("モデル学習と評価が完了しました。")
         except Exception as e:
-            traceback.print_exc()
+            print(f"!!! FATAL ERROR in train_and_evaluate_model !!!"); traceback.print_exc()
             self.root.after(0, lambda: messagebox.showerror("モデル学習エラー", f"モデル学習・評価中に予期せぬエラー:\n{e}"))
-        
+            self.update_status(f"エラー: モデル学習失敗 ({e})")
+        finally:
+            print("--- Model Training and Evaluation Finished ---")
+    
+    
     def start_model_training_process(self):
         """
         モデル学習プロセスの開始点。
@@ -3493,13 +3458,15 @@ class HorseRacingAnalyzerApp:
              # ↑↑↑ repr(e) でエラーオブジェクトの詳細な表現を出力 ↑↑↑
              # ★ エラー発生時もUIスレッドでメッセージ表示
              self.root.after(0, self.handle_collection_error, e)
-    
+
     def load_local_files(self, csv_path, json_path=None):
         """ローカルのCSVとJSONファイルを読み込み、統計計算を実行し、データを格納する"""
         try:
             if csv_path and os.path.exists(csv_path):
                 self.update_status(f"CSV読み込み中: {os.path.basename(csv_path)}")
                 df_combined = pd.read_csv(csv_path, low_memory=False)
+                
+                # 日付列の変換
                 date_cols = ['date', 'race_date']
                 for col in date_cols:
                     if col in df_combined.columns:
@@ -3514,6 +3481,7 @@ class HorseRacingAnalyzerApp:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     self.payout_data = json.load(f)
             
+            # --- 統計計算 & データ前処理 ---
             if self.combined_data is not None and not self.combined_data.empty:
                 self.update_status("各種統計データ計算中...")
                 self._calculate_course_time_stats()
@@ -3521,8 +3489,16 @@ class HorseRacingAnalyzerApp:
                 if 'mother_father' in self.combined_data.columns: self._calculate_sire_stats(sire_column='mother_father')
                 self._calculate_gate_stats()
                 self._calculate_reference_times()
+                
+                # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                # ★ ここで騎手統計の計算を呼び出す ★
+                # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
                 if 'JockeyName' in self.combined_data.columns:
-                    self._calculate_jockey_stats() # ★★★ 騎手統計の計算を呼び出し ★★★
+                    self._calculate_jockey_stats()
+                else:
+                    self.jockey_stats = {}
+                    print("INFO: combined_dataに'JockeyName'列がないため、騎手データの統計計算をスキップします。")
+                
                 self.preprocess_data_for_training()
             else:
                 self.course_time_stats={}; self.father_stats={}; self.mother_father_stats={}; self.gate_stats={}; self.jockey_stats={}; self.reference_times={}
@@ -3534,1983 +3510,10 @@ class HorseRacingAnalyzerApp:
 
         except Exception as e:
             self.handle_collection_error(e)
-    
-    def process_collection_results(self, df_combined, payout_data, start_year, start_month, end_year, end_month):
-        """データ収集完了後の処理 (統計計算追加)"""
-        if df_combined is not None and not df_combined.empty:
-            self.combined_data = df_combined.copy()
-            self.payout_data = payout_data[:]
-            
-            self.update_status("各種統計データ計算中...")
-            self._calculate_course_time_stats()
-            if 'father' in self.combined_data.columns: self._calculate_sire_stats(sire_column='father')
-            if 'mother_father' in self.combined_data.columns: self._calculate_sire_stats(sire_column='mother_father')
-            self._calculate_gate_stats()
-            self._calculate_reference_times()
-            if 'JockeyName' in self.combined_data.columns:
-                self._calculate_jockey_stats() # ★★★ 騎手統計の計算を呼び出し ★★★
 
-            self.preprocess_data_for_training()
-            
-            self.update_status(f"データ処理完了: {self.combined_data.shape[0]}行")
-            messagebox.showinfo("データ処理完了", f"データの準備が完了しました。\nレースデータ: {self.combined_data.shape[0]}行\n(各種統計計算済)")
-            self.update_data_preview()
-            
-            if start_year:
-                save_dir = self.settings.get("data_dir", ".")
-                if not os.path.exists(save_dir):
-                     try: os.makedirs(save_dir)
-                     except: save_dir = "."
-                period_str = f"{start_year}{start_month:02d}_{end_year}{end_month:02d}"
-                save_filename_base = "netkeiba_data"
-                results_filename = os.path.join(save_dir, f"{save_filename_base}_combined_{period_str}.csv")
-                payouts_filename = os.path.join(save_dir, f"{save_filename_base}_payouts_{period_str}.json")
-                try:
-                    df_to_save = self.combined_data.copy()
-                    if 'date' in df_to_save.columns and pd.api.types.is_datetime64_any_dtype(df_to_save['date']):
-                        df_to_save['date'] = df_to_save['date'].dt.strftime('%Y年%m月%d日')
-                    df_to_save.to_csv(results_filename, index=False, encoding='utf-8-sig')
-                    print(f"収集データをCSVに保存しました: {results_filename}")
-                    if self.payout_data:
-                        with open(payouts_filename, 'w', encoding='utf-8') as f:
-                            json.dump(self.payout_data, f, indent=2, ensure_ascii=False)
-                        print(f"払い戻しデータをJSONに保存しました: {payouts_filename}")
-                    messagebox.showinfo("データ保存完了", f"収集したデータは以下に保存されました:\nCSV: {results_filename}\nJSON: {payouts_filename}")
-                except Exception as e:
-                    messagebox.showerror("自動保存エラー", f"収集データの自動保存エラー:\n{e}")
-
-        else:
-            self.update_status("データ処理完了: 有効なデータがありませんでした。")
-            messagebox.showwarning("データ処理完了", "有効なレースデータが見つかりませんでした。")
-            self.combined_data = pd.DataFrame()
-            self.payout_data = []
-            self.course_time_stats = {}
-            self.father_stats = {}
-            self.mother_father_stats = {}
-            self.jockey_stats = {}
-            self.update_data_preview()
-
-    def handle_collection_error(self, error):
-        """データ収集/読み込みエラー発生時の処理 (UIスレッドで実行)"""
-        error_message = f"{type(error).__name__}: {error}"
-        self.update_status(f"エラー発生: {error_message}")
-        messagebox.showerror("処理エラー", f"データの取得または読み込み中にエラーが発生しました:\n{error_message}")
-        print("\n--- エラー詳細 ---")
-        traceback.print_exc() # コンソールに詳細なエラーを出力
-        print("-----------------\n")
-
-    # ===========================================================
-    # === データ取得/読み込み関連のメソッド (ここまで追加) ===
-    # ===========================================================
-
-    def init_analysis_tab(self):
-        """データ分析タブの初期化（結果表示をテーブルに変更）"""
-        left_frame = ttk.LabelFrame(self.tab_analysis, text="分析オプション")
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-
-        # 分析タイプ選択
-        analysis_type_label = ttk.Label(left_frame, text="分析タイプ:")
-        analysis_type_label.grid(row=0, column=0, sticky=tk.W, padx=10, pady=5)
-        self.analysis_type_var = tk.StringVar(value="人気別分析") # デフォルト変更
-        analysis_type_combo = ttk.Combobox(left_frame, textvariable=self.analysis_type_var, state="readonly", width=15)
-        analysis_type_combo['values'] = ("人気別分析", "距離別分析", "コース種別分析", "騎手分析", "血統分析", "競馬場分析(未)", "特徴量重要度(未)", "オッズ分析(未)", "調教師分析(未)") # ← 血統分析を追加(未)削除
-        analysis_type_combo.grid(row=0, column=1, sticky=tk.EW, padx=10, pady=5)
-
-        # --- フィルターオプション ---
-        filter_frame = ttk.LabelFrame(left_frame, text="フィルター")
-        filter_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-        # 競馬場フィルター
-        track_label = ttk.Label(filter_frame, text="競馬場:")
-        track_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.track_var = tk.StringVar(value="すべて")
-        track_combo = ttk.Combobox(filter_frame, textvariable=self.track_var, width=10, state="readonly",
-                                   values=("すべて", "東京", "中山", "阪神", "京都", "中京", "小倉", "福島", "新潟", "札幌", "函館"))
-        track_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-        # コース種別フィルター
-        course_label = ttk.Label(filter_frame, text="コース:")
-        course_label.grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-        self.course_var = tk.StringVar(value="すべて")
-        course_combo = ttk.Combobox(filter_frame, textvariable=self.course_var, width=10, state="readonly",
-                                    values=("すべて", "芝", "ダート", "障害"))
-        course_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
-        # 距離フィルター
-        distance_label = ttk.Label(filter_frame, text="距離(m):")
-        distance_label.grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-        distance_frame = ttk.Frame(filter_frame)
-        distance_frame.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
-        self.min_distance_var = tk.StringVar(value="すべて")
-        min_distance_combo = ttk.Combobox(distance_frame, textvariable=self.min_distance_var, width=7,
-                                           values=["すべて"] + [str(dist) for dist in range(1000, 4001, 100)])
-        min_distance_combo.grid(row=0, column=0, padx=2)
-        distance_separator = ttk.Label(distance_frame, text="〜")
-        distance_separator.grid(row=0, column=1, padx=2)
-        self.max_distance_var = tk.StringVar(value="すべて")
-        max_distance_combo = ttk.Combobox(distance_frame, textvariable=self.max_distance_var, width=7,
-                                           values=["すべて"] + [str(dist) for dist in range(1000, 4001, 100)])
-        max_distance_combo.grid(row=0, column=2, padx=2)
-
-        # 分析実行ボタン
-        analyze_button = ttk.Button(left_frame, text="分析実行", command=self.run_analysis)
-        analyze_button.grid(row=2, column=0, columnspan=2, pady=20)
-
-        # === 右側のフレーム（分析結果をテーブル表示） ===
-        # ★★★ 変数名を self.analysis_result_frame に変更 ★★★
-        self.analysis_result_frame = ttk.LabelFrame(self.tab_analysis, text="分析結果")
-        self.analysis_result_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10) # ★ pack も変更後の変数名で
-
-        # --- テーブル表示エリア ---
-        # ★★★ 親ウィジェットを self.analysis_result_frame に変更 ★★★
-        analysis_table_frame = ttk.Frame(self.analysis_result_frame)
-        analysis_table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        y_scrollbar = ttk.Scrollbar(analysis_table_frame, orient=tk.VERTICAL)
-        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        x_scrollbar = ttk.Scrollbar(analysis_table_frame, orient=tk.HORIZONTAL)
-        x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.analysis_tree = ttk.Treeview(analysis_table_frame,
-                                           yscrollcommand=y_scrollbar.set,
-                                           xscrollcommand=x_scrollbar.set,
-                                           height=15)
-        self.analysis_tree.pack(fill=tk.BOTH, expand=True)
-        y_scrollbar.config(command=self.analysis_tree.yview)
-        x_scrollbar.config(command=self.analysis_tree.xview)
-
-        # 結果保存ボタン (必要であれば後で実装)
-        # save_result_button = ttk.Button(self.analysis_result_frame, text="結果を保存", command=self.save_analysis_result) # ★ 親を変更
-        # save_result_button.pack(pady=10, anchor=tk.E)
-
-    
-    def init_prediction_tab(self):
-        """予測タブの初期化"""
-        # 左側のフレーム（予測設定）
-        left_frame = ttk.LabelFrame(self.tab_prediction, text="予測設定")
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-
-        # --- レース選択 (改善) ---
-        race_select_frame = ttk.LabelFrame(left_frame, text="予測対象レース")
-        race_select_frame.grid(row=0, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        # TODO: 将来的には日付、競馬場からレースリストを動的に取得し選択できるようにする
-        race_id_label = ttk.Label(race_select_frame, text="レースID入力:")
-        race_id_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.predict_race_id_var = tk.StringVar()
-        race_id_entry = ttk.Entry(race_select_frame, textvariable=self.predict_race_id_var, width=20)
-        race_id_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=5)
-
-        race_button = ttk.Button(race_select_frame, text="レース情報表示", command=self.fetch_race_info_for_prediction)
-        race_button.grid(row=1, column=0, columnspan=2, pady=10)
-
-        # --- 予測タイプ選択 ---
-        prediction_type_frame = ttk.LabelFrame(left_frame, text="予測・購入馬券種")
-        prediction_type_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        self.prediction_type_var = tk.StringVar(value="win") # 単勝をデフォルトに
-
-        win_radio = ttk.Radiobutton(prediction_type_frame, text="単勝", variable=self.prediction_type_var, value="win")
-        win_radio.pack(anchor=tk.W, padx=10, pady=2)
-        place_radio = ttk.Radiobutton(prediction_type_frame, text="複勝", variable=self.prediction_type_var, value="place")
-        place_radio.pack(anchor=tk.W, padx=10, pady=2)
-        wide_radio = ttk.Radiobutton(prediction_type_frame, text="ワイド", variable=self.prediction_type_var, value="wide")
-        wide_radio.pack(anchor=tk.W, padx=10, pady=2)
-        uren_radio = ttk.Radiobutton(prediction_type_frame, text="馬連", variable=self.prediction_type_var, value="uren")
-        uren_radio.pack(anchor=tk.W, padx=10, pady=2)
-        utan_radio = ttk.Radiobutton(prediction_type_frame, text="馬単", variable=self.prediction_type_var, value="utan") # exacta -> utan
-        utan_radio.pack(anchor=tk.W, padx=10, pady=2)
-        sanfuku_radio = ttk.Radiobutton(prediction_type_frame, text="三連複", variable=self.prediction_type_var, value="sanfuku")
-        sanfuku_radio.pack(anchor=tk.W, padx=10, pady=2)
-        santan_radio = ttk.Radiobutton(prediction_type_frame, text="三連単", variable=self.prediction_type_var, value="santan") # trifecta -> santan
-        santan_radio.pack(anchor=tk.W, padx=10, pady=2)
-
-        # --- 戦略設定 (設定タブと連動させる) ---
-        strategy_frame = ttk.LabelFrame(left_frame, text="購入戦略 (設定タブで変更)")
-        strategy_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        min_ev_label = ttk.Label(strategy_frame, text="最小期待値:")
-        min_ev_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.pred_min_ev_label = ttk.Label(strategy_frame, text=self.settings.get("min_expected_value", "N/A")) # 設定値を表示
-        self.pred_min_ev_label.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-
-        min_prob_label = ttk.Label(strategy_frame, text="最小確率:")
-        min_prob_label.grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-        self.pred_min_prob_label = ttk.Label(strategy_frame, text=self.settings.get("min_probability", "N/A")) # 設定値を表示
-        self.pred_min_prob_label.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
-
-        kelly_label = ttk.Label(strategy_frame, text="ケリー係数:")
-        kelly_label.grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-        self.pred_kelly_label = ttk.Label(strategy_frame, text=self.settings.get("kelly_fraction", "N/A")) # 設定値を表示
-        self.pred_kelly_label.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
-
-        max_bet_label = ttk.Label(strategy_frame, text="最大賭け金比率:")
-        max_bet_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=2)
-        self.pred_max_bet_label = ttk.Label(strategy_frame, text=self.settings.get("max_bet_ratio", "N/A")) # 設定値を表示
-        self.pred_max_bet_label.grid(row=3, column=1, sticky=tk.W, padx=5, pady=2)
-
-        # 予測実行ボタン
-        predict_button = ttk.Button(left_frame, text="予測実行", command=self.run_prediction)
-        predict_button.grid(row=3, column=0, columnspan=2, pady=20)
-
-        # 右側のフレーム（予測結果）
-        right_frame = ttk.Frame(self.tab_prediction) # LabelFrameをやめてFrameに
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # レース情報表示
-        race_info_frame = ttk.LabelFrame(right_frame, text="レース情報")
-        race_info_frame.pack(fill=tk.X, padx=0, pady=(0, 5)) # パディング調整
-
-        self.race_info_label = ttk.Label(race_info_frame, text="レース情報: 未選択", font=("Meiryo UI", 10, "bold"))
-        self.race_info_label.pack(anchor=tk.W, padx=5, pady=2)
-
-        self.race_details_label = ttk.Label(race_info_frame, text="")
-        self.race_details_label.pack(anchor=tk.W, padx=5, pady=2)
-
-        # 予測結果テーブル
-        result_frame = ttk.LabelFrame(right_frame, text="予測結果 (上位表示)")
-        result_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=5)
-
-        y_scrollbar = ttk.Scrollbar(result_frame, orient=tk.VERTICAL)
-        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.prediction_tree = ttk.Treeview(result_frame, yscrollcommand=y_scrollbar.set, height=8) # 高さを指定
-        self.prediction_tree.pack(fill=tk.BOTH, expand=True, padx=(5,0), pady=5) # 右側にスクロールバー分のスペース
-        y_scrollbar.config(command=self.prediction_tree.yview)
-
-        # 推奨馬券表示
-        recommendation_frame = ttk.LabelFrame(right_frame, text="推奨馬券と購入額 (シミュレーション)")
-        recommendation_frame.pack(fill=tk.X, padx=0, pady=5)
-
-        self.recommendation_text = tk.Text(recommendation_frame, height=6, wrap=tk.WORD, font=("Meiryo UI", 9)) # フォント指定
-        rec_scrollbar = ttk.Scrollbar(recommendation_frame, orient=tk.VERTICAL, command=self.recommendation_text.yview)
-        self.recommendation_text.config(yscrollcommand=rec_scrollbar.set)
-        rec_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.recommendation_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # 結果保存ボタン
-        save_prediction_button = ttk.Button(right_frame, text="予測結果を保存", command=self.save_prediction_result)
-        save_prediction_button.pack(pady=10, anchor=tk.E)
-        
-        
-
-
-    def init_results_tab(self):
-        """結果検証タブの初期化"""
-        # 左側のフレーム（結果分析オプション）
-        left_frame = ttk.LabelFrame(self.tab_results, text="バックテスト設定") # 名前変更
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-
-        # --- 対象期間選択 ---
-        period_frame = ttk.LabelFrame(left_frame, text="対象期間")
-        period_frame.grid(row=0, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        current_year = datetime.now().year
-        years = tuple(str(year) for year in range(2010, current_year + 1))
-        months = tuple(f"{month:02d}" for month in range(1, 13))
-
-        from_label = ttk.Label(period_frame, text="開始:")
-        from_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.result_from_year_var = tk.StringVar(value=str(current_year - 5)) # 5年前
-        from_year_combo = ttk.Combobox(period_frame, textvariable=self.result_from_year_var, width=5, state="readonly", values=years)
-        from_year_combo.grid(row=0, column=1, padx=2, pady=2)
-        self.result_from_month_var = tk.StringVar(value="01")
-        from_month_combo = ttk.Combobox(period_frame, textvariable=self.result_from_month_var, width=3, state="readonly", values=months)
-        from_month_combo.grid(row=0, column=2, padx=2, pady=2)
-
-        to_label = ttk.Label(period_frame, text="終了:")
-        to_label.grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-        self.result_to_year_var = tk.StringVar(value=str(current_year))
-        to_year_combo = ttk.Combobox(period_frame, textvariable=self.result_to_year_var, width=5, state="readonly", values=years)
-        to_year_combo.grid(row=1, column=1, padx=2, pady=2)
-        self.result_to_month_var = tk.StringVar(value=datetime.now().strftime("%m"))
-        to_month_combo = ttk.Combobox(period_frame, textvariable=self.result_to_month_var, width=3, state="readonly", values=months)
-        to_month_combo.grid(row=1, column=2, padx=2, pady=2)
-
-        # --- 対象馬券種選択 ---
-        bet_type_frame = ttk.LabelFrame(left_frame, text="対象馬券種")
-        bet_type_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        self.res_win_var = tk.BooleanVar(value=True)
-        win_check = ttk.Checkbutton(bet_type_frame, text="単勝", variable=self.res_win_var)
-        win_check.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-
-        self.res_place_var = tk.BooleanVar(value=True)
-        place_check = ttk.Checkbutton(bet_type_frame, text="複勝", variable=self.res_place_var)
-        place_check.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-
-        self.res_wide_var = tk.BooleanVar(value=True)
-        wide_check = ttk.Checkbutton(bet_type_frame, text="ワイド", variable=self.res_wide_var)
-        wide_check.grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-
-        self.res_uren_var = tk.BooleanVar(value=True)
-        uren_check = ttk.Checkbutton(bet_type_frame, text="馬連", variable=self.res_uren_var)
-        uren_check.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
-
-        self.res_utan_var = tk.BooleanVar(value=True)
-        utan_check = ttk.Checkbutton(bet_type_frame, text="馬単", variable=self.res_utan_var)
-        utan_check.grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-
-        self.res_sanfuku_var = tk.BooleanVar(value=True)
-        sanfuku_check = ttk.Checkbutton(bet_type_frame, text="三連複", variable=self.res_sanfuku_var)
-        sanfuku_check.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
-
-        self.res_santan_var = tk.BooleanVar(value=True)
-        santan_check = ttk.Checkbutton(bet_type_frame, text="三連単", variable=self.res_santan_var)
-        santan_check.grid(row=3, column=0, sticky=tk.W, padx=5, pady=2)
-
-        # --- 分析タイプ選択 (グラフの種類) ---
-        result_type_frame = ttk.LabelFrame(left_frame, text="グラフ表示")
-        result_type_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
-
-        result_type_label = ttk.Label(result_type_frame, text="分析タイプ:")
-        result_type_label.pack(anchor=tk.W, padx=5, pady=2)
-
-        self.result_type_var = tk.StringVar(value="収支推移") # デフォルト変更
-        result_type_combo = ttk.Combobox(result_type_frame, textvariable=self.result_type_var, state="readonly", width=15)
-        result_type_combo['values'] = ("収支推移", "月別収支", "年別収支", "馬券種別ROI", "的中率", "期待値別ROI") # 見直し
-        result_type_combo.pack(anchor=tk.W, padx=5, pady=2)
-
-        # バックテスト実行ボタン
-        analyze_button = ttk.Button(left_frame, text="バックテスト実行", command=self.run_result_analysis)
-        analyze_button.grid(row=3, column=0, columnspan=2, pady=20)
-
-        # 右側のフレーム（分析結果）
-        right_frame = ttk.Frame(self.tab_results) # LabelFrameをやめてFrameに
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # サマリー表示
-        summary_frame = ttk.LabelFrame(right_frame, text="バックテスト結果サマリー")
-        summary_frame.pack(fill=tk.X, padx=0, pady=(0,5)) # パディング調整
-
-        self.summary_text = tk.Text(summary_frame, height=7, wrap=tk.WORD, font=("Meiryo UI", 9)) # フォント指定
-        summary_scrollbar = ttk.Scrollbar(summary_frame, orient=tk.VERTICAL, command=self.summary_text.yview)
-        self.summary_text.config(yscrollcommand=summary_scrollbar.set)
-        summary_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.summary_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # グラフ表示エリア
-        graph_frame = ttk.LabelFrame(right_frame, text="グラフ表示")
-        graph_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=5)
-
-        self.result_figure = plt.Figure(figsize=(6, 4), dpi=100)
-        # self.result_figure.patch.set_facecolor('#f0f0f0') # 背景色
-        self.result_canvas = FigureCanvasTkAgg(self.result_figure, graph_frame)
-        self.result_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # 結果保存ボタン
-        save_result_analysis_button = ttk.Button(right_frame, text="結果を保存", command=self.save_result_analysis)
-        save_result_analysis_button.pack(pady=10, anchor=tk.E)
-
-
-    def init_settings_tab(self):
-        """設定タブの初期化"""
-        settings_frame = ttk.Frame(self.tab_settings, padding="10")
-        settings_frame.pack(fill=tk.BOTH, expand=True)
-
-        # 戦略設定
-        strategy_frame = ttk.LabelFrame(settings_frame, text="購入戦略パラメータ")
-        strategy_frame.pack(fill=tk.X, padx=10, pady=10)
-        strategy_frame.columnconfigure(1, weight=1) # Entryを広げるため
-
-        row_idx = 0
-        # 最小期待値
-        min_ev_label = ttk.Label(strategy_frame, text="最小期待値:")
-        min_ev_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_min_ev_var = tk.StringVar()
-        min_ev_entry = ttk.Entry(strategy_frame, textvariable=self.settings_min_ev_var, width=10)
-        min_ev_entry.grid(row=row_idx, column=1, sticky=tk.W, padx=10, pady=5)
-        min_ev_desc = ttk.Label(strategy_frame, text="この値以上の期待値を持つ馬券のみ購入対象とする (例: 1.1)")
-        min_ev_desc.grid(row=row_idx, column=2, sticky=tk.W, padx=10, pady=5)
-        row_idx += 1
-
-        # 最小予測確率
-        min_prob_label = ttk.Label(strategy_frame, text="最小予測確率:")
-        min_prob_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_min_prob_var = tk.StringVar()
-        min_prob_entry = ttk.Entry(strategy_frame, textvariable=self.settings_min_prob_var, width=10)
-        min_prob_entry.grid(row=row_idx, column=1, sticky=tk.W, padx=10, pady=5)
-        min_prob_desc = ttk.Label(strategy_frame, text="この値以上の予測確率を持つ馬券のみ購入対象とする (例: 0.1 = 10%)")
-        min_prob_desc.grid(row=row_idx, column=2, sticky=tk.W, padx=10, pady=5)
-        row_idx += 1
-
-        # ケリー係数
-        kelly_label = ttk.Label(strategy_frame, text="ケリー係数:")
-        kelly_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_kelly_var = tk.StringVar()
-        kelly_entry = ttk.Entry(strategy_frame, textvariable=self.settings_kelly_var, width=10)
-        kelly_entry.grid(row=row_idx, column=1, sticky=tk.W, padx=10, pady=5)
-        kelly_desc = ttk.Label(strategy_frame, text="ケリー基準で計算された投資比率に乗じる係数 (0 < kelly <= 1, 例: 0.5 = ハーフケリー)")
-        kelly_desc.grid(row=row_idx, column=2, sticky=tk.W, padx=10, pady=5)
-        row_idx += 1
-
-        # 最大賭け金比率
-        max_bet_label = ttk.Label(strategy_frame, text="最大投資比率:") # 名称変更
-        max_bet_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_max_bet_var = tk.StringVar()
-        max_bet_entry = ttk.Entry(strategy_frame, textvariable=self.settings_max_bet_var, width=10)
-        max_bet_entry.grid(row=row_idx, column=1, sticky=tk.W, padx=10, pady=5)
-        max_bet_desc = ttk.Label(strategy_frame, text="1レースあたりの最大投資額を総資金の割合で制限 (例: 0.05 = 5%)")
-        max_bet_desc.grid(row=row_idx, column=2, sticky=tk.W, padx=10, pady=5)
-        row_idx += 1
-
-        # ディレクトリ設定
-        dir_frame = ttk.LabelFrame(settings_frame, text="保存先ディレクトリ")
-        dir_frame.pack(fill=tk.X, padx=10, pady=10, ipady=5)
-        dir_frame.columnconfigure(1, weight=1) # Entryを広げるため
-
-        row_idx = 0
-        # データディレクトリ
-        data_dir_label = ttk.Label(dir_frame, text="データ:")
-        data_dir_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_data_dir_var = tk.StringVar()
-        data_dir_entry = ttk.Entry(dir_frame, textvariable=self.settings_data_dir_var, width=40)
-        data_dir_entry.grid(row=row_idx, column=1, sticky=tk.EW, padx=10, pady=5)
-        data_dir_button = ttk.Button(dir_frame, text="参照", command=lambda: self.browse_directory(self.settings_data_dir_var))
-        data_dir_button.grid(row=row_idx, column=2, padx=10, pady=5)
-        row_idx += 1
-
-        # モデルディレクトリ
-        models_dir_label = ttk.Label(dir_frame, text="学習モデル:")
-        models_dir_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_models_dir_var = tk.StringVar()
-        models_dir_entry = ttk.Entry(dir_frame, textvariable=self.settings_models_dir_var, width=40)
-        models_dir_entry.grid(row=row_idx, column=1, sticky=tk.EW, padx=10, pady=5)
-        models_dir_button = ttk.Button(dir_frame, text="参照", command=lambda: self.browse_directory(self.settings_models_dir_var))
-        models_dir_button.grid(row=row_idx, column=2, padx=10, pady=5)
-        row_idx += 1
-
-        # 結果ディレクトリ
-        results_dir_label = ttk.Label(dir_frame, text="分析/予測結果:")
-        results_dir_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_results_dir_var = tk.StringVar()
-        results_dir_entry = ttk.Entry(dir_frame, textvariable=self.settings_results_dir_var, width=40)
-        results_dir_entry.grid(row=row_idx, column=1, sticky=tk.EW, padx=10, pady=5)
-        results_dir_button = ttk.Button(dir_frame, text="参照", command=lambda: self.browse_directory(self.settings_results_dir_var))
-        results_dir_button.grid(row=row_idx, column=2, padx=10, pady=5)
-        row_idx += 1
-
-        # ボタンフレーム
-        button_frame = ttk.Frame(settings_frame)
-        button_frame.pack(fill=tk.X, padx=10, pady=20)
-
-        reset_settings_button = ttk.Button(button_frame, text="デフォルトに戻す", command=self.reset_settings)
-        reset_settings_button.pack(side=tk.RIGHT, padx=10)
-
-        save_settings_button = ttk.Button(button_frame, text="設定を保存", command=self.save_settings)
-        save_settings_button.pack(side=tk.RIGHT, padx=10)
-
-    # --- Helper Methods ---
-    def update_status(self, text):
-        """ステータスバーのテキストを更新"""
-        self.status_var.set(text)
-        self.root.update_idletasks() # 即時反映
-
-    def run_in_thread(self, target_func, *args):
-        """指定された関数を別スレッドで実行"""
-        thread = threading.Thread(target=target_func, args=args, daemon=True)
-        thread.start()
-
-    # --- File/Directory Browsing ---
-    def browse_file(self):
-        """レース結果CSVファイル選択ダイアログを表示"""
-        # 設定で指定されたデータディレクトリを初期ディレクトリにする
-        initial_dir = self.settings.get("data_dir", ".")
-        file_path = filedialog.askopenfilename(
-            title="レース結果 CSVファイルを選択",
-            initialdir=initial_dir,
-            filetypes=[("CSVファイル", "*.csv"), ("すべてのファイル", "*.*")]
-        )
-        if file_path:
-            self.file_path_var.set(file_path)
-            # ファイル選択時に自動で読み込みを開始する（オプション）
-            # self.fetch_data()
-
-    def browse_directory(self, var):
-        """ディレクトリ選択ダイアログを表示"""
-        initial_dir = var.get() if os.path.isdir(var.get()) else os.path.expanduser("~")
-        dir_path = filedialog.askdirectory(title="ディレクトリを選択", initialdir=initial_dir)
-        if dir_path:
-            var.set(dir_path)
-
-    # --- Data Management ---
-    def fetch_data(self):
-        """データ取得/読み込み処理"""
-        source = self.data_source_var.get()
-        self.update_status(f"{source} からデータ取得/読み込み中...")
-
-        if "ローカルファイル" in source:
-            file_path = self.file_path_var.get()
-             # ★★★ 修正箇所 ★★★
-            # ファイルパスが空でもエラーにせず、そのまま _load_local_csv を呼び出す
-            # (ファイルが存在しない場合のチェックは _load_local_csv 側で行う)
-            # if not file_path or not os.path.exists(file_path):
-            #     messagebox.showerror("ファイルエラー", "有効なCSVファイルが選択されていません。")
-            #     self.update_status("エラー: ファイル未選択")
-            #     return
-            self.run_in_thread(self._load_local_csv, file_path) # ファイルパスを渡す
-        else:
-            # Web取得ロジック (変更なし)
-            messagebox.showinfo("未実装", f"{source} からのデータ取得は現在実装されていません。\nローカルファイルを選択してください。")
-            self.update_status("準備完了")
-
-
-    def _load_local_csv(self, file_path):
-        """ローカルCSVファイルの読み込み（別スレッドで実行）"""
-        # !!! 重要 !!!
-        # この関数はサンプルです。実際のCSVファイルの形式に合わせて、
-        # pandas.read_csvの引数（encoding, header, usecolsなど）や、
-        # 読み込み後のデータ前処理（列名変更、型変換、結合など）を実装する必要があります。
-        # ここでは、generate_sample_dataで生成されるデータに近い形式を仮定します。
-        try:
-             # ★★★ 修正箇所 ★★★
-            # ファイルパスが指定されているかチェック
-            if file_path and os.path.exists(file_path):
-                # --- ファイルパスがある場合：実際のCSV読み込み処理 ---
-                self.update_status(f"ローカルファイル読み込み中: {os.path.basename(file_path)}")
-                # 例: 複数のCSV（レース情報、馬情報、結果情報）を読み込む場合
-                # ... (実際のCSV読み込み処理、現状はコメントアウトされている)
-
-                # --- ここではサンプルデータの読み込みをシミュレート ---
-                self.generate_sample_data() # ★ 将来的には実際のCSV読み込みに置き換える
-
-                # --- データ結合と前処理 ---
-                if self.result_data is not None and self.race_data is not None and self.horse_data is not None:
-                     merged_data = pd.merge(self.result_data, self.race_data, on='race_id', how='left')
-                     self.combined_data = pd.merge(merged_data, self.horse_data, on='horse_id', how='left')
-                     # 前処理
-                     self.combined_data['race_date'] = pd.to_datetime(self.combined_data['race_date'])
-                     print("データ結合完了:", self.combined_data.shape)
-                     print("結合データ Columns:", self.combined_data.columns.tolist())
-                else:
-                    self.combined_data = None
-
-                # UI更新
-                self.root.after(0, self.update_data_preview)
-                self.root.after(0, lambda: self.update_status(f"ローカルファイル読み込み完了: {os.path.basename(file_path)}"))
-                self.root.after(0, lambda: messagebox.showinfo("読み込み完了", f"データの読み込みが完了しました。\n結合データ: {self.combined_data.shape if self.combined_data is not None else 'N/A'}"))
-
-            elif file_path and not os.path.exists(file_path):
-                # --- ファイルパスはあるが存在しない場合：エラー表示 ---
-                self.root.after(0, lambda: messagebox.showerror("ファイルエラー", f"指定されたファイルが見つかりません:\n{file_path}"))
-                self.root.after(0, lambda: self.update_status("エラー: 指定ファイルが見つかりません"))
-                # データクリア
-                self.race_data, self.horse_data, self.result_data, self.combined_data = None, None, None, None
-                self.root.after(0, self.update_data_preview)
-
-            else:
-                # --- ファイルパスが指定されていない場合：サンプルデータを生成 ---
-                self.update_status("サンプルデータ生成中...")
-                self.generate_sample_data()
-
-                # --- データ結合と前処理 (サンプルデータ用) ---
-                if self.result_data is not None and self.race_data is not None and self.horse_data is not None:
-                     merged_data = pd.merge(self.result_data, self.race_data, on='race_id', how='left')
-                     self.combined_data = pd.merge(merged_data, self.horse_data, on='horse_id', how='left')
-                     self.combined_data['race_date'] = pd.to_datetime(self.combined_data['race_date'])
-                     print("サンプルデータ結合完了:", self.combined_data.shape)
-                else:
-                    self.combined_data = None
-
-                # UI更新
-                self.root.after(0, self.update_data_preview)
-                self.root.after(0, lambda: self.update_status("サンプルデータの読み込み完了"))
-                self.root.after(0, lambda: messagebox.showinfo("サンプルデータ", f"サンプルデータを使用します。\n結合データ: {self.combined_data.shape if self.combined_data is not None else 'N/A'}"))
-
-
-        except FileNotFoundError: # これは os.path.exists でチェックしてるので通常発生しないはず
-            self.root.after(0, lambda: messagebox.showerror("ファイルエラー", f"ファイルが見つかりません:\n{file_path}"))
-            self.root.after(0, lambda: self.update_status("エラー: ファイルが見つかりません"))
-        except pd.errors.ParserError:
-             self.root.after(0, lambda: messagebox.showerror("CSVパースエラー", f"CSVファイルの形式が正しくない可能性があります。\n{file_path}"))
-             self.root.after(0, lambda: self.update_status("エラー: CSVパースエラー"))
-        except Exception as e:
-            import traceback
-            traceback.print_exc() # 詳細なエラーをコンソールに出力
-            self.root.after(0, lambda: messagebox.showerror("読み込みエラー", f"データの読み込み中にエラーが発生しました:\n{e}"))
-            self.root.after(0, lambda: self.update_status(f"エラー: {e}"))
-            # エラー発生時はデータをクリア
-            self.race_data = None
-            self.horse_data = None
-            self.result_data = None
-            self.combined_data = None
-            self.root.after(0, self.update_data_preview)
-
-
-    def _fetch_web_data(self, source, from_date, to_date):
-        """Webからのデータ取得（別スレッドで実行）- 未実装"""
-        # !!! 重要 !!!
-        # この関数は未実装です。netkeiba等のサイトからデータを取得する場合、
-        # WebスクレイピングやAPI利用のロジックをここに実装します。
-        # サイトの利用規約を遵守し、適切なアクセス間隔を設定してください。
-        import time
-        print(f"Webデータ取得開始: {source} ({from_date} - {to_date})")
-        time.sleep(3) # 処理シミュレーション
-
-        # --- ここにスクレイピング等の処理 ---
-        # 取得したデータを self.race_data, self.horse_data, self.result_data に格納
-        # self.generate_sample_data() # サンプルデータで代用
-
-        # --- データ結合と前処理 ---
-        # _load_local_csvと同様の処理
-
-        print("Webデータ取得完了（シミュレーション）")
-        self.root.after(0, self.update_data_preview)
-        self.root.after(0, lambda: self.update_status(f"{source}からのデータ取得完了"))
-        self.root.after(0, lambda: messagebox.showinfo("取得完了", f"{source}からのデータ取得が完了しました。（シミュレーション）"))
-
-
-    def update_data_preview(self):
-        """データプレビューテーブルの更新"""
-        data_type = self.data_type_var.get()
-        df = None
-
-        if data_type == "combined":
-            df = self.combined_data
-            if df is None: self.update_status("プレビュー: 結合データがありません")
-        elif data_type == "race":
-            df = self.race_data
-            if df is None: self.update_status("プレビュー: レースデータがありません")
-        elif data_type == "horse":
-            df = self.horse_data
-            if df is None: self.update_status("プレビュー: 馬データがありません")
-        elif data_type == "result":
-            df = self.result_data
-            if df is None: self.update_status("プレビュー: 結果データがありません")
-
-        # テーブルをクリア
-        for item in self.preview_tree.get_children():
-            self.preview_tree.delete(item)
-        self.preview_tree["columns"] = [] # 列情報もクリア
-
-        if df is not None and not df.empty:
-            # 列の設定
-            columns = list(df.columns)
-            self.preview_tree["columns"] = columns
-            self.preview_tree["show"] = "headings"
-
-            for col in columns:
-                col_width = max(len(col) * 10, 80) # 列名の長さに基づいて幅を決定（最小80px）
-                self.preview_tree.heading(col, text=col)
-                self.preview_tree.column(col, width=col_width, anchor=tk.W)
-
-            # データの追加 (表示件数を制限)
-            max_rows = 100
-            df_head = df.head(max_rows)
-            for i, row in df_head.iterrows():
-                # NaNやNoneを空文字列に変換して表示
-                values = ["" if pd.isna(val) else val for val in row.values]
-                self.preview_tree.insert("", "end", values=values)
-
-            self.update_status(f"プレビュー: {data_type} データを {min(len(df), max_rows)}/{len(df)} 行表示中")
-        else:
-             self.update_status(f"プレビュー: 表示する {data_type} データがありません")
-
-
-    def save_data(self):
-        """表示中のデータをCSVファイルに保存"""
-        data_type = self.data_type_var.get()
-        df_to_save = None
-        default_filename = "data.csv"
-
-        if data_type == "combined" and self.combined_data is not None:
-            df_to_save = self.combined_data
-            default_filename = "combined_data.csv"
-        elif data_type == "race" and self.race_data is not None:
-            df_to_save = self.race_data
-            default_filename = "race_data.csv"
-        elif data_type == "horse" and self.horse_data is not None:
-            df_to_save = self.horse_data
-            default_filename = "horse_data.csv"
-        elif data_type == "result" and self.result_data is not None:
-            df_to_save = self.result_data
-            default_filename = "result_data.csv"
-
-        if df_to_save is not None and not df_to_save.empty:
-            save_dir = self.settings.get("data_dir", ".")
-            file_path = filedialog.asksaveasfilename(
-                title=f"{data_type}データを保存",
-                initialdir=save_dir,
-                initialfile=default_filename,
-                defaultextension=".csv",
-                filetypes=[("CSVファイル", "*.csv"), ("すべてのファイル", "*.*")]
-            )
-            if file_path:
-                try:
-                    df_to_save.to_csv(file_path, index=False, encoding='utf-8-sig') # BOM付きUTF-8で保存
-                    self.update_status(f"{data_type}データを保存しました: {file_path}")
-                    messagebox.showinfo("データ保存", f"{data_type}データを保存しました。")
-                except Exception as e:
-                    messagebox.showerror("保存エラー", f"データの保存中にエラーが発生しました:\n{e}")
-                    self.update_status(f"エラー: {data_type}データの保存失敗")
-        else:
-            messagebox.showwarning("データ保存", f"保存する{data_type}データがありません。")
-            self.update_status(f"警告: 保存する{data_type}データなし")
-
-
-    # --- Data Analysis ---
-    
-    def run_analysis(self):
-        """分析実行処理（血統分析の前処理を追加）"""
-        if self.combined_data is None or self.combined_data.empty:
-             messagebox.showwarning("分析実行", "分析対象のデータが読み込まれていません。\nデータ管理タブでデータを読み込んでください。")
-             return
-
-        analysis_type = self.analysis_type_var.get()
-        filters = {
-            "track": self.track_var.get(),
-            "course": self.course_var.get(),
-            "min_dist": self.min_distance_var.get(),
-            "max_dist": self.max_distance_var.get(),
-        }
-
-        # === ★★★ 血統分析の場合、父情報の前処理を行う ★★★ ===
-        if analysis_type == "血統分析":
-            # combined_data に 'father' 列が既にあるかチェック
-            if 'father' not in self.combined_data.columns:
-                messagebox.showinfo("血統情報準備", "血統分析のために、各馬の父情報を取得します。\nデータ量によっては時間がかかる場合があります。")
-                self.update_status("血統情報の取得・マージ中...")
-                # ★★★ 父情報取得・マージ処理を別スレッドで実行 ★★★
-                # 処理完了後に _run_analysis_thread を呼び出すようにする
-                self.run_in_thread(self._prepare_father_data_and_analyze, analysis_type, filters)
-                return # 前処理スレッドに任せて、ここでは一旦終了
-            else:
-                print("情報: 既に父情報が存在するため、前処理をスキップします。")
-                # 既に父情報があれば、通常通り分析スレッドを開始
-                self.update_status(f"{analysis_type}の分析実行中...")
-                self.run_in_thread(self._run_analysis_thread, analysis_type, filters)
-        else:
-            # 血統分析以外は、通常通り分析スレッドを開始
-            self.update_status(f"{analysis_type}の分析実行中...")
-            self.run_in_thread(self._run_analysis_thread, analysis_type, filters)
- 
-    def _run_analysis_thread(self, analysis_type, filters):
-        """分析の非同期処理（人気別、距離別、コース種別、血統分析を追加）"""
-        import time
-        import pandas as pd # type: ignore
-        import numpy as np # type: ignore
-        # import matplotlib.pyplot as plt # テーブル表示のみなら不要かも
-        import traceback
-
-        try:
-            start_time = _time.time()
-            # print(f"\n--- Starting Analysis Thread ---")
-            # print(f"DEBUG: Analysis type selected from GUI: '{self.analysis_type_var.get()}'...")
-            analysis_type = self.analysis_type_var.get()
-            self.root.after(0, lambda: self.update_status(f"{analysis_type} の分析実行中..."))
-
-            if self.combined_data is None or self.combined_data.empty:
-                # ... (データなし処理) ...
-                return
-
-            # --- フィルター適用 ---
-            filtered_df = self.combined_data.copy()
-            filter_text_parts = []
-            # ... (フィルター処理: 競馬場, コース, 距離 - 変更なし) ...
-            if filters["track"] != "すべて":
-                if 'track_name' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['track_name'] == filters["track"]]
-                    filter_text_parts.append(f"競馬場={filters['track']}")
-                else: print("警告: データに競馬場名列がありません。")
-            selected_course = filters["course"] 
-            if filters["course"] != "すべて":
-                if 'course_type' in filtered_df.columns:
-                    target_value = filters["course"]
-                    if selected_course == 'ダート': target_value = 'ダ' #比較対象を変更
-                    elif selected_course == '芝': target_value = '芝'
-                    elif selected_course == '障害': target_value = '障'
-                    filtered_df = filtered_df[filtered_df['course_type'].astype(str).str.strip() == target_value]
-                    filter_text_parts.append(f"コース={filters['course']}")
-                else: print("警告: データに 'course_type' 列がありません。")
-            try: # 距離フィルター
-                min_dist_str = filters["min_dist"]; max_dist_str = filters["max_dist"]
-                apply_dist_filter = False; min_dist = 0; max_dist = float('inf')
-                if min_dist_str != "すべて": min_dist = int(min_dist_str); apply_dist_filter = True
-                if max_dist_str != "すべて": max_dist = int(max_dist_str); apply_dist_filter = True
-                if apply_dist_filter and 'distance' in filtered_df.columns:
-                    distance_col_numeric = pd.to_numeric(filtered_df['distance'], errors='coerce')
-                    distance_filter = (distance_col_numeric >= min_dist) & (distance_col_numeric <= max_dist)
-                    filtered_df = filtered_df[distance_filter.fillna(False)]
-                    filter_text_parts.append(f"距離={min_dist_str}～{max_dist_str}m")
-                elif apply_dist_filter: print("警告: データに 'distance' 列がありません。")
-            except ValueError: messagebox.showwarning(...); self.update_status(...); return
-            except Exception as e_dist_filter: print(f"ERROR: Error during distance filtering: {e_dist_filter}"); traceback.print_exc()
-
-            # print(f"DEBUG: Final filtered_df shape before analysis: {filtered_df.shape}")
-
-            if filtered_df.empty:
-                 # ... (フィルター結果が空の場合の処理) ...
-                 return
-
-            # --- 分析タイプに応じた処理 ---
-            analysis_result_df = pd.DataFrame()
-            table_title = "分析結果"
-            filter_str = f" ({', '.join(filter_text_parts)})" if filter_text_parts else ""
-
-            if analysis_type == "人気別分析":
-                # ... (人気別分析ロジック - 変更なし) ...
-                print(f"  人気別分析: テーブル表示用データ\n{analysis_result_df}")
-                table_title = f'人気別 成績{filter_str}'
-
-            elif analysis_type == "距離別分析":
-                # ... (距離別分析ロジック - 変更なし) ...
-                print(f"  距離別分析: テーブル表示用データ\n{analysis_result_df}")
-                table_title = f'距離別 成績{filter_str}'
-
-            elif analysis_type == "コース種別分析":
-                # ... (コース種別分析ロジック - 変更なし) ...
-                print(f"  コース種別分析: テーブル表示用データ\n{analysis_result_df}")
-                table_title = f'コース種別 成績{filter_str}'
-
-            elif analysis_type == "騎手分析":
-                # ... (騎手分析ロジック - 変更なし) ...
-                print(f"  騎手分析: テーブル表示用データ (上位{len(analysis_result_df)}件)\n{analysis_result_df}")
-                table_title = f'騎手別 成績 (騎乗10回以上){filter_str}'
-
-            # === ★★★ 血統分析 (父別) の処理を追加 ★★★ ===
-            elif analysis_type == "血統分析":
-                required_cols = ['father', 'Rank'] # fatherとRank列が必要
-                if not all(col in filtered_df.columns for col in required_cols):
-                     missing_cols = [col for col in required_cols if col not in filtered_df.columns]
-                     # 父情報がない場合は前処理を促すメッセージ
-                     if 'father' in missing_cols:
-                          messagebox.showerror("データエラー", "血統分析には父情報が必要です。\nデータ管理タブでデータを再取得するか、血統分析を再度実行して父情報を準備してください。")
-                     else:
-                          messagebox.showerror("データエラー", f"分析に必要な列({', '.join(missing_cols)})がデータに含まれていません。")
-                     self.root.after(0, lambda: self.update_status("エラー: データ形式不正"))
-                     return
-
-                print(f"  血統分析 (父別){filter_str}: {len(filtered_df)} 行のデータで集計開始...")
-                df_analysis = filtered_df.copy()
-                # Rankを数値に変換、父がNaNや空の行を除外
-                df_analysis['Rank'] = pd.to_numeric(df_analysis['Rank'], errors='coerce')
-                df_analysis.dropna(subset=['father', 'Rank'], inplace=True)
-                df_analysis = df_analysis[df_analysis['father'] != ''] # 空の父名を除外
-                df_analysis['Rank'] = df_analysis['Rank'].astype(int)
-
-                if df_analysis.empty:
-                     self.root.after(0, lambda: messagebox.showinfo("分析結果", "フィルター条件に該当する有効な父・着順データがありません。")); self.root.after(0, lambda: self.update_status("分析完了: 対象データなし")); self.root.after(0, lambda: self._update_analysis_table(pd.DataFrame(), f"血統分析 (父別) (データなし){filter_str}")); return
-
-                # 父でグループ化して集計
-                analysis_result = df_analysis.groupby('father').agg(
-                    Runs=('father', 'size'), Wins=('Rank', lambda x: (x == 1).sum()),
-                    Place2=('Rank', lambda x: (x <= 2).sum()), Place3=('Rank', lambda x: (x <= 3).sum()),
-                    Rank4over=('Rank', lambda x: (x >= 4).sum())
-                )
-                # 出走回数が少ない種牡馬を除外 (例: 10回以上)
-                min_runs = 10
-                analysis_result = analysis_result[analysis_result['Runs'] >= min_runs]
-
-                if not analysis_result.empty:
-                    analysis_result['成績'] = analysis_result.apply( lambda r: f"{int(r['Wins'])}-{int(r['Place2'] - r['Wins'])}-{int(r['Place3'] - r['Place2'])}-{int(r['Rank4over'])}", axis=1)
-                    analysis_result['WinRate'] = analysis_result.apply(lambda r: r['Wins'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
-                    analysis_result['Place2Rate'] = analysis_result.apply(lambda r: r['Place2'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
-                    analysis_result['Place3Rate'] = analysis_result.apply(lambda r: r['Place3'] / r['Runs'] if r['Runs'] > 0 else 0, axis=1)
-                    # 複勝率でソートし、上位 N 件を表示 (例: 上位30件)
-                    analysis_result = analysis_result.sort_values('Place3Rate', ascending=False)
-                    analysis_result_df = analysis_result[['成績', 'WinRate', 'Place2Rate', 'Place3Rate', 'Runs']].head(30).reset_index() # 父の名前も列に含める
-                    print(f"  血統分析 (父別): テーブル表示用データ (上位{len(analysis_result_df)}件)\n{analysis_result_df}")
-                else:
-                     print(f"  血統分析 (父別): 出走回数{min_runs}回以上の種牡馬データがありません。")
-                     analysis_result_df = pd.DataFrame()
-
-                table_title = f'血統分析 (父別) (出走{min_runs}回以上){filter_str}'
-            # === ★★★ 血統分析ここまで ★★★ ===
-
-            # === 他の未実装分析タイプ ===
-            else:
-                 print(f"DEBUG: Analysis type '{analysis_type}' is not implemented or does not match.")
-                 self.root.after(0, lambda: self._update_analysis_table(pd.DataFrame(), f"{analysis_type} (未実装)"))
-
-            # --- 結果表示 (テーブル表示) ---
-            # ★ analysis_type をチェックする条件に 血統分析 を追加 ★
-            if analysis_type in ["人気別分析", "距離別分析", "コース種別分析", "騎手分析", "血統分析"]:
-                 if not analysis_result_df.empty:
-                     self.root.after(0, self._update_analysis_table, analysis_result_df, table_title)
-                 # ★ analysis_type をチェックする条件に 血統分析 を追加 ★
-                 elif analysis_type in ["人気別分析", "距離別分析", "コース種別分析", "騎手分析", "血統分析"]: # 集計結果が空だった場合
-                     self.root.after(0, lambda: self._update_analysis_table(pd.DataFrame(), f"{analysis_type} (データなし){filter_str}"))
-            # else: # 未実装の場合は上の else ブロックでテーブルクリア済み
-
-            # --- ステータス更新 ---
-            end_time = time.time()
-            # print(f"  分析処理時間: {end_time - start_time:.2f} 秒")
-            self.root.after(0, lambda: self.update_status(f"{analysis_type} の分析完了 ({end_time - start_time:.2f}秒)"))
-            print(f"--- Analysis Thread for {analysis_type} finished ---")
-
-        except Exception as e:
-            print(f"!!! Error in _run_analysis_thread ({analysis_type}) !!!")
-            self.root.after(0, lambda: messagebox.showerror("分析エラー", f"分析中にエラーが発生しました:\n{e}"))
-            self.root.after(0, lambda: self.update_status(f"エラー: 分析失敗 ({e})"))
-            self.root.after(0, lambda: self._update_analysis_table(pd.DataFrame(), "分析エラー"))
-            traceback.print_exc()
-
-    def _prepare_father_data_and_analyze(self, analysis_type, filters):
-        """馬の父情報を取得・マージし、CSVに保存し、統計計算してから分析スレッドを開始する"""
-        try:
-            # ... (データチェック、父情報取得ループ、マージ処理 - 変更なし) ...
-            # if self.combined_data is None or self.combined_data.empty: print("エラー: ..."); return
-            # if 'horse_id' not in self.combined_data.columns: print("エラー: ..."); return
-            # unique_horse_ids = self.combined_data['horse_id'].dropna().unique(); father_data = {}; num_total = len(unique_horse_ids)
-            # print(f"父情報が必要な馬: {num_total} 頭")
-            # for i, horse_id in enumerate(unique_horse_ids):
-                # self.update_status(f"父情報取得中... ({i+1}/{num_total})")
-                # details = self.get_horse_details(str(horse_id))
-                # father_data[horse_id] = details.get('father')
-                # time.sleep(0.05)
-            # father_df = pd.DataFrame(father_data.items(), columns=['horse_id', 'father'])
-            # self.combined_data['horse_id'] = self.combined_data['horse_id'].astype(str)
-            # father_df['horse_id'] = father_df['horse_id'].astype(str)
-            # print(f"DEBUG: Merging combined_data ...")
-            # if 'father' in self.combined_data.columns: self.combined_data = self.combined_data.drop(columns=['father'])
-            # self.combined_data = pd.merge(self.combined_data, father_df, on='horse_id', how='left')
-            # print(f"DEBUG: combined_data shape after merge: {self.combined_data.shape}")
-            # print(f"DEBUG: Count of non-null fathers after merge: {self.combined_data['father'].notna().sum()}")
-
-            # --- 父情報をマージしたデータをCSVに上書き保存 ---
-            # current_csv_path = self.file_path_var.get()
-            # if current_csv_path and os.path.exists(os.path.dirname(current_csv_path)):
-                # try:
-                    # print(f"父情報を追加したデータをCSVに保存します: {current_csv_path}")
-                    # self.update_status("父情報をCSVに保存中...")
-                    # self.combined_data.to_csv(current_csv_path, index=False, encoding='utf-8-sig')
-                    # print("CSVファイルの保存が完了しました。")
-                    # self.root.after(0, lambda: messagebox.showinfo("情報", "血統情報をCSVファイルに保存しました。..."))
-                # except Exception as e_save: print(f"ERROR: Failed to save combined_data ...: {e_save}"); messagebox.showerror(...)
-            # else: print("警告: 現在のCSVファイルパスが無効なため、父情報はCSVに保存されませんでした。")
-
-            # --- ★★★ 種牡馬(父)統計データの計算を実行 ★★★ ---
-            if self.combined_data is not None and not self.combined_data.empty and 'father' in self.combined_data.columns:
-                 self._calculate_sire_stats(sire_column='father') # ←★ ここで呼び出す！
-            # --- ★★★ 計算実行ここまで ★★★ ---
-
-            # 分析スレッドを実行
-            self.update_status(f"{analysis_type}の分析実行中...")
-            self.run_in_thread(self._run_analysis_thread, analysis_type, filters)
-
-        except Exception as e:
-            print(f"!!! Error in _prepare_father_data_and_analyze !!!")
-            self.root.after(0, lambda: messagebox.showerror("前処理エラー", f"血統情報の準備中にエラーが発生しました:\n{e}"))
-            self.root.after(0, lambda: self.update_status(f"エラー: 血統情報準備失敗 ({e})"))
-            traceback.print_exc()
-
-    def _update_analysis_table(self, result_df, title="分析結果"):
-        """データ分析タブのテーブルを更新"""
-        # ... (テーブルクリア、タイトル更新、データなしチェックは変更なし) ...
-
-        columns = list(result_df.columns)
-        self.analysis_tree["columns"] = columns
-        self.analysis_tree["show"] = "headings"
-
-        for col in columns:
-            width = 100; anchor = tk.W; col_name = col
-
-            # === 列ごとの表示設定 ===
-            if col == 'NinkiGroup':         width = 100; anchor = tk.W; col_name = '人気'
-            elif col == 'DistanceGroup':    width = 100; anchor = tk.W; col_name = '距離区分'
-            elif col == 'course_type':      width = 80; anchor = tk.W; col_name = 'コース種別' # ★コース種別追加
-            elif col == '成績':            width = 100; anchor = tk.CENTER; col_name = '成績'
-            elif col == 'WinRate':         width = 80; anchor = tk.E; col_name = '勝率'
-            elif col == 'Place2Rate':       width = 80; anchor = tk.E; col_name = '連対率'
-            elif col == 'Place3Rate':       width = 80; anchor = tk.E; col_name = '複勝率'
-            elif col == 'Runs':            width = 60; anchor = tk.E; col_name = 'N数'
-            # 他の列の表示設定が必要ならここに追加
-
-            self.analysis_tree.heading(col, text=col_name)
-            self.analysis_tree.column(col, width=width, anchor=anchor)
-
-        # === データ追加 (変更なし) ===
-        for index, row in result_df.iterrows():
-            display_values = []
-            for col in columns:
-                value = row[col]
-                if 'Rate' in col: # 率をパーセント表示
-                    try: value = f"{float(value):.1%}"
-                    except (ValueError, TypeError): value = "N/A"
-                elif col == 'Runs': # N数を整数表示
-                     try: value = int(value)
-                     except (ValueError, TypeError): value = "N/A"
-                # 他の列はそのまま
-                display_values.append(value if pd.notna(value) else "")
-            self.analysis_tree.insert("", "end", values=display_values)
-
-        print("分析結果テーブルを更新しました。")
-
-    
-    # --- Prediction ---
-    def fetch_race_info_for_prediction(self):
-        """予測タブでレースIDに基づいてレース情報を表示"""
-        race_id = self.predict_race_id_var.get()
-        if not race_id:
-            messagebox.showwarning("レースID未入力", "予測対象のレースIDを入力してください。")
-            return
-
-        if self.combined_data is None or self.combined_data.empty:
-            messagebox.showwarning("データ未読み込み", "データが読み込まれていません。\nデータ管理タブでデータを読み込んでください。")
-            return
-
-        self.update_status(f"レース情報検索中: {race_id}")
-        self.run_in_thread(self._fetch_race_info_thread, race_id)
-    
-    def _fetch_race_info_thread(self, race_id):
-        """
-        【最終強化版・完全版】
-        レース情報の取得と表示、予測、期待値計算、推奨買い目生成までを行う。
-        「近3走」表示の不具合を修正。
-        """
-        import pandas as pd
-        import numpy as np
-        import traceback
-        import tkinter as tk
-        from tkinter import messagebox
-        
-        try:
-            self.root.after(0, lambda: self.update_status(f"レースID {race_id}: 予測処理開始..."))
-            
-            if not hasattr(self, 'trained_model') or self.trained_model is None or not hasattr(self, 'model_features') or not self.model_features:
-                self.root.after(0, lambda: messagebox.showwarning("モデル未学習", "学習済みモデルまたは特徴量リストが読み込まれていません。"))
-                return
-
-            web_data = self.get_shutuba_table(race_id)
-            if not web_data or not web_data.get('horse_list'):
-                self.root.after(0, lambda: messagebox.showerror("Web取得エラー", f"レースID {race_id} の出馬表をWebから取得できませんでした。"))
-                return
-            
-            race_df = pd.DataFrame(web_data['horse_list'])
-            race_conditions = web_data.get('race_details', {})
-            race_conditions['RaceDate'] = pd.to_datetime(race_conditions.get('RaceDate'), format='%Y年%m月%d日', errors='coerce')
-            race_conditions['baba'] = race_conditions.get('TrackCondition')
-
-            race_info_text = f"{race_conditions.get('RaceDate', pd.Timestamp.now()).strftime('%Y年%m月%d日')} {race_conditions.get('TrackName', '')}{race_conditions.get('RaceNum', '')}R {race_conditions.get('RaceName', '')}"
-            race_details_text = f"{race_conditions.get('CourseType', '')}{race_conditions.get('Around', '')}{race_conditions.get('Distance', '')}m / 天候:{race_conditions.get('Weather', '')} / 馬場:{race_conditions.get('TrackCondition', '')}"
-
-            horse_details_list_for_gui = []
-            for index, row in race_df.iterrows():
-                horse_id = row.get('horse_id')
-                if pd.isna(horse_id): continue
-                
-                horse_id_str = str(horse_id).split('.')[0]
-                horse_full_details = self.horse_details_cache.get(horse_id_str)
-                if not horse_full_details:
-                    horse_full_details = self.get_horse_details(horse_id_str)
-                    if isinstance(horse_full_details, dict) and not horse_full_details.get('error'):
-                        self.horse_details_cache[horse_id_str] = horse_full_details
-                
-                horse_basic_info = dict(row)
-                if isinstance(horse_full_details, dict):
-                    horse_basic_info.update(horse_full_details)
-                
-                if 'race_results' in horse_basic_info and isinstance(horse_basic_info['race_results'], list):
-                    predict_date = race_conditions.get('RaceDate')
-                    if pd.notna(predict_date):
-                        horse_basic_info['race_results'] = [r for r in horse_basic_info['race_results'] if isinstance(r, dict) and pd.to_datetime(r.get('date'), errors='coerce') < predict_date]
-
-                _, features_dict = self.calculate_original_index(horse_basic_info, race_conditions)
-                
-                predicted_proba, expected_value_win = None, None
-
-                if features_dict.get('error') is None:
-                    try:
-                        feature_values_for_model = {col: features_dict.get(col, np.nan) for col in self.model_features}
-                        X_pred = pd.DataFrame([feature_values_for_model])[self.model_features]
-                        
-                        if '距離区分' in X_pred.columns:
-                            dist_map = {'1400m以下': 0, '1401-1800m': 1, '1801-2200m': 2, '2201-2600m': 3, '2601m以上': 4}
-                            X_pred['距離区分'] = X_pred['距離区分'].map(dist_map)
-                        
-                        X_pred = X_pred.fillna(self.imputation_values_).fillna(0)
-                        
-                        proba_result = self.trained_model.predict_proba(X_pred)
-                        predicted_proba = proba_result[0, 1]
-                        
-                        odds_win = pd.to_numeric(row.get('Odds'), errors='coerce')
-                        if pd.notna(predicted_proba) and pd.notna(odds_win) and odds_win > 0:
-                            expected_value_win = predicted_proba * odds_win
-                    except Exception as e:
-                        features_dict['error'] = "予測計算エラー"
-                
-                current_horse_info = dict(row)
-                
-                # ★★★【重要】ここで「近3走」の情報を追加する処理を復活 ★★★
-                recent_ranks = [str(r.get('rank_str', r.get('rank', '?'))) for r in horse_basic_info.get('race_results', [])[:3]]
-                current_horse_info['近3走'] = "/".join(recent_ranks) if recent_ranks else 'N/A'
-                
-                current_horse_info['予測確率'] = round(predicted_proba, 4) if pd.notna(predicted_proba) else None
-                current_horse_info['期待値'] = round(expected_value_win, 2) if pd.notna(expected_value_win) else None
-                current_horse_info['error_detail'] = features_dict.get('error')
-                horse_details_list_for_gui.append(current_horse_info)
-
-            horse_details_list_for_gui.sort(key=lambda x: x.get('予測確率', 0) or 0, reverse=True)
-            
-            self.root.after(0, lambda: self.race_info_label.config(text=race_info_text))
-            self.root.after(0, lambda: self.race_details_label.config(text=race_details_text))
-            self.root.after(0, self._update_prediction_table, horse_details_list_for_gui)
-            
-            recommendation_text = self.create_recommendation_text(horse_details_list_for_gui)
-            if hasattr(self, 'recommendation_text') and self.recommendation_text.winfo_exists():
-                self.root.after(0, lambda: self.recommendation_text.delete(1.0, tk.END))
-                self.root.after(0, lambda: self.recommendation_text.insert(tk.END, recommendation_text))
-            
-            self.root.after(0, lambda: self.update_status(f"予測完了: {race_id}"))
-        except Exception as e:
-            traceback.print_exc()
-            self.root.after(0, lambda: messagebox.showerror("予測処理エラー", f"予測処理中に予期せぬエラー: {e}"))
-    
-    def create_recommendation_text(self, horses_info):
-        """
-        予測結果リストから、期待値に基づいた推奨買い目テキストを生成する。
-        単勝・複勝・馬連・ワイド・三連複の買い方を提示。
-        """
-        text = "【AI推奨買い目】\n"
-        text += "----------------------------------\n"
-
-        # 予測確率と期待値でソートされた馬のリストを作成
-        # 予測確率や期待値が計算できなかった馬（None）は除外
-        valid_horses = [h for h in horses_info if pd.notna(h.get('予測確率')) and pd.notna(h.get('期待値'))]
-        
-        if not valid_horses:
-            return "有効な予測データがないため、買い目を生成できません。"
-
-        # 期待値順にソート
-        sorted_by_ev = sorted(valid_horses, key=lambda x: x.get('期待値', 0), reverse=True)
-        # 予測確率順にソート
-        sorted_by_proba = sorted(valid_horses, key=lambda x: x.get('予測確率', 0), reverse=True)
-
-        # --- 単勝 ---
-        min_expected_value = float(self.settings.get("min_expected_value", 1.2))
-        win_bets = [h for h in sorted_by_ev if h.get('期待値', 0) >= min_expected_value]
-        text += "◎ 単勝 (期待値重視)\n"
-        if win_bets:
-            for horse in win_bets:
-                text += f"  馬番 {horse.get('Umaban')} {horse.get('HorseName')} (期待値: {horse.get('期待値'):.2f})\n"
-        else:
-            text += f"  (期待値が{min_expected_value}を超える馬なし)\n"
-        text += "\n"
-
-        # --- 複勝 ---
-        min_proba_place = 0.40 # 例: 40%以上の確率で3着以内に来ると予測
-        place_bets = [h for h in sorted_by_proba if h.get('予測確率', 0) >= min_proba_place]
-        text += "○ 複勝 (確率重視)\n"
-        if place_bets:
-            for horse in place_bets:
-                text += f"  馬番 {horse.get('Umaban')} {horse.get('HorseName')} (予測確率: {horse.get('予測確率'):.1%})\n"
-        else:
-            text += f"  (予測確率が{min_proba_place:.0%}を超える馬なし)\n"
-        text += "\n"
-
-        # --- 馬連・ワイド (予測確率上位3頭ボックス) ---
-        text += "▲ 馬連・ワイド (確率上位3頭ボックス)\n"
-        if len(sorted_by_proba) >= 3:
-            top3_horses = sorted_by_proba[:3]
-            top3_numbers = [h.get('Umaban') for h in top3_horses]
-            text += f"  対象馬: {', '.join(top3_numbers)}\n"
-            text += f"  馬連ボックス: {top3_numbers[0]}-{top3_numbers[1]}, {top3_numbers[0]}-{top3_numbers[2]}, {top3_numbers[1]}-{top3_numbers[2]}\n"
-            text += f"  ワイドボックス: (上記3点)\n"
-        else:
-            text += "  (予測可能な馬が3頭未満)\n"
-        text += "\n"
-
-        # --- 三連複 (期待値1位を軸に、確率上位へ流す) ---
-        text += "☆ 三連複 (期待値軸1頭ながし)\n"
-        if sorted_by_ev and len(sorted_by_proba) >= 4:
-            axis_horse = sorted_by_ev[0]
-            # 軸馬自身を除いた確率上位4頭を相手に選ぶ
-            opponent_horses = [h for h in sorted_by_proba if h.get('Umaban') != axis_horse.get('Umaban')][:4]
-            axis_num = axis_horse.get('Umaban')
-            opponent_nums = [h.get('Umaban') for h in opponent_horses]
-            text += f"  軸: {axis_num} {axis_horse.get('HorseName')}\n"
-            text += f"  相手: {', '.join(opponent_nums)}\n"
-            text += f"  (買い目: {axis_num} - ( {', '.join(opponent_nums)} ) へのフォーメーション)\n"
-        else:
-            text += "  (軸または相手馬の頭数が不足)\n"
-
-        return text
-    
-    def _update_prediction_table(self, horses_info):
-        """
-        予測タブの出走馬テーブルを更新。「期待値」列を追加。
-        """
-        try:
-            if not hasattr(self, 'prediction_tree') or not self.prediction_tree.winfo_exists():
-                return
-
-            for item in self.prediction_tree.get_children():
-                self.prediction_tree.delete(item)
-
-            if not horses_info:
-                return
-
-            # ★★★ 表示する列に「期待値」を追加 ★★★
-            columns = ["Umaban", "HorseName", "SexAge", "Load", "JockeyName", "Odds", "予測確率", "期待値", "father", "近3走", "error_detail"]
-            self.prediction_tree["columns"] = columns
-            self.prediction_tree["show"] = "headings"
-
-            col_settings = {
-                "Umaban": {"text": "馬番", "width": 40}, "HorseName": {"text": "馬名", "width": 120},
-                "SexAge": {"text": "性齢", "width": 50}, "Load": {"text": "斤量", "width": 50},
-                "JockeyName": {"text": "騎手", "width": 80}, "Odds": {"text": "単勝", "width": 60},
-                "予測確率": {"text": "予測確率", "width": 70}, "期待値": {"text": "期待値", "width": 60},
-                "father": {"text": "父", "width": 100}, "近3走": {"text": "近3走", "width": 70},
-                "error_detail": {"text": "エラー", "width": 100}
-            }
-            for col_id, setting in col_settings.items():
-                self.prediction_tree.column(col_id, width=setting["width"], anchor=tk.CENTER)
-                self.prediction_tree.heading(col_id, text=setting["text"])
-
-            for horse_data in horses_info:
-                display_values = []
-                for col in columns:
-                    value = horse_data.get(col)
-                    if isinstance(value, float):
-                        # フォーマットを調整
-                        if col == '予測確率': value = f"{value:.4f}"
-                        elif col == '期待値': value = f"{value:.2f}"
-                        else: value = f"{value:.1f}"
-                    display_values.append(value if pd.notna(value) else "")
-                self.prediction_tree.insert("", "end", values=display_values)
-        except Exception as e:
-            print(f"!!! Error in _update_prediction_table: {e}")
- 
-    def run_prediction(self):
-        """予測実行処理"""
-        # レース情報が表示されているか（出走馬テーブルにデータがあるか）確認
-        # このチェックは _fetch_race_info_thread 実行前には不要かもしれません。
-        # race_id さえあれば _fetch_race_info_thread が情報を取得するため。
-        # if not self.prediction_tree.get_children():
-        #     messagebox.showwarning("予測実行", "予測対象のレース情報が表示されていません。\nレースIDを入力して「レース情報表示」ボタンを押してください。")
-        #     return
-
-        # 学習済みモデルの存在チェックは _fetch_race_info_thread 側で行っています。
-        # if self.model is None: # self.model ではなく self.trained_model を想定
-        #     messagebox.showwarning("予測実行", "予測モデルがロードされていません。\n設定タブでモデルをロードするか、学習させてください。")
-        #     return
-
-        # 予測タブにあるレースID入力フィールドから race_id を取得
-        race_id = self.predict_race_id_var.get()
-        if not race_id:
-            messagebox.showerror("エラー", "レースIDが入力されていません。\n予測タブの「レースID」フィールドにIDを入力してください。")
-            self.update_status("エラー: レースID未入力")
-            return
-
-        # prediction_type_var (win, utan, santan など) は、現在の _fetch_race_info_thread では
-        # 直接使用されていません。_fetch_race_info_thread は主に「3着以内確率」を計算します。
-        # もしこれらの券種別の予測を将来的に実装する場合は、_fetch_race_info_thread の改修や
-        # 別途専用の予測ロジックが必要になります。
-        prediction_type = self.prediction_type_var.get()
-        self.update_status(f"レースID {race_id} の {prediction_type} 予測準備中...") # ステータス表示を少し変更
-
-        # テーブルから現在の出走馬情報を取得する部分は、_fetch_race_info_thread が
-        # race_id を元に情報を取得し直すため、ここでは不要になります。
-        # horses_on_table = []
-        # ... (中略) ...
-        # if not horses_on_table:
-        #     messagebox.showerror("予測エラー", "出走馬情報が見つかりません。")
-        #     self.update_status("エラー: 出走馬情報なし")
-        #     return
-
-        # 既存の _fetch_race_info_thread を呼び出して予測処理を実行します。
-        # このメソッドは引数として race_id を取ります。
-        self.update_status(f"レースID {race_id} の予測実行中...")
-        self.run_in_thread(self._fetch_race_info_thread, race_id) # 第2引数 horses_on_table は不要
-        # ↑↑↑ 修正案ここまで ↑↑↑
-
-    def _update_prediction_result_table(self, predictions, columns):
-        """予測結果テーブルの更新"""
-        # テーブルクリア
-        for item in self.prediction_tree.get_children():
-            self.prediction_tree.delete(item)
-
-        if not predictions: # 結果がない場合は列設定もしない
-            self.prediction_tree["columns"] = []
-            return
-
-        # 列設定
-        self.prediction_tree["columns"] = columns
-        self.prediction_tree["show"] = "headings"
-
-        # 列幅とアライメントを設定
-        for col in columns:
-            width = 80 # デフォルト幅
-            anchor = tk.W # デフォルト左寄せ
-            if "馬番" in col:
-                width = 100 if "→" in col else 40 # 組み合わせなら広く
-                anchor = tk.CENTER
-            elif "馬名" in col:
-                 width = 150 if "→" in col else 120
-            elif "オッズ" in col:
-                 width = 70
-                 anchor = tk.E
-            elif "確率" in col:
-                 width = 70
-                 anchor = tk.E
-            elif "期待値" in col:
-                 width = 60
-                 anchor = tk.E
-
-            self.prediction_tree.heading(col, text=col)
-            self.prediction_tree.column(col, width=width, anchor=anchor)
-
-        # データ追加
-        for i, pred in enumerate(predictions):
-             values = [pred.get(col, 'N/A') for col in columns]
-             # 期待値や確率を小数点以下表示調整
-             for j, col_name in enumerate(columns):
-                 if col_name == "予測確率":
-                     try: values[j] = f"{float(values[j]):.4f}"
-                     except: pass
-                 elif col_name == "期待値":
-                     try: values[j] = f"{float(values[j]):.2f}"
-                     except: pass
-                 elif "オッズ" in col_name:
-                     try: values[j] = f"{float(values[j]):.1f}"
-                     except: pass
-
-             self.prediction_tree.insert("", "end", values=values, iid=f"pred_{i}") # iidを付与
-
-
-    def save_prediction_result(self):
-        """予測結果と推奨馬券をテキストファイルに保存"""
-        if not self.race_info_label.cget("text") or "未選択" in self.race_info_label.cget("text"):
-             messagebox.showwarning("保存エラー", "保存する予測結果がありません。\nレースを選択して予測を実行してください。")
-             return
-
-        save_dir = self.settings.get("results_dir", ".")
-        # ファイル名にレース情報を含める
-        race_info_str = self.race_info_label.cget("text").replace("レース情報: ", "").replace(" ", "_").replace("/", "-")
-        pred_type = self.prediction_type_var.get()
-        default_filename = f"prediction_{race_info_str}_{pred_type}_{datetime.now().strftime('%Y%m%d%H%M')}.txt"
-
-        file_path = filedialog.asksaveasfilename(
-            title="予測結果を保存",
-            initialdir=save_dir,
-            initialfile=default_filename,
-            defaultextension=".txt",
-            filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")]
-        )
-        if file_path:
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    # レース情報
-                    f.write(f"{self.race_info_label.cget('text')}\n")
-                    f.write(f"{self.race_details_label.cget('text')}\n\n")
-
-                    # 予測結果テーブルの内容
-                    f.write("--- 予測結果 ---\n")
-                    columns = self.prediction_tree["columns"]
-                    if columns:
-                         f.write("\t".join(columns) + "\n")
-                         for item_id in self.prediction_tree.get_children():
-                             values = self.prediction_tree.item(item_id)["values"]
-                             f.write("\t".join(map(str, values)) + "\n")
-                    else:
-                         f.write("予測結果はありません。\n")
-
-                    # 推奨馬券
-                    f.write("\n--- 推奨馬券 ---\n")
-                    f.write(self.recommendation_text.get(1.0, tk.END))
-
-                self.update_status(f"予測結果を保存しました: {file_path}")
-                messagebox.showinfo("予測結果保存", "予測結果を保存しました。")
-            except Exception as e:
-                 messagebox.showerror("保存エラー", f"予測結果の保存中にエラーが発生しました:\n{e}")
-                 self.update_status("エラー: 予測結果の保存失敗")
-
-
-    # --- Result Verification (Backtesting) ---
-    def run_result_analysis(self):
-        """結果分析（バックテスト）実行処理"""
-        if self.combined_data is None or self.combined_data.empty:
-             messagebox.showwarning("バックテスト実行", "分析対象のデータが読み込まれていません。\nデータ管理タブでデータを読み込んでください。")
-             return
-
-        # TODO: 予測モデルがロードされているか確認
-        # if self.model is None: ...
-
-        analysis_type = self.result_type_var.get() # 表示するグラフの種類
-        self.update_status(f"バックテスト実行中 ({analysis_type})...")
-
-        # バックテスト条件を取得
-        try:
-             start_date = f"{self.result_from_year_var.get()}-{self.result_from_month_var.get()}-01"
-             end_year = int(self.result_to_year_var.get())
-             end_month = int(self.result_to_month_var.get())
-             # 月末日を取得
-             import calendar
-             last_day = calendar.monthrange(end_year, end_month)[1]
-             end_date = f"{end_year:04d}-{end_month:02d}-{last_day:02d}"
-             start_dt = pd.to_datetime(start_date)
-             end_dt = pd.to_datetime(end_date)
-        except ValueError:
-            messagebox.showerror("日付エラー", "バックテスト期間の開始日または終了日の形式が正しくありません。")
-            self.update_status("エラー: 日付形式不正")
-            return
-
-        bet_types_to_run = {
-            "win": self.res_win_var.get(),
-            "place": self.res_place_var.get(),
-            "wide": self.res_wide_var.get(),
-            "uren": self.res_uren_var.get(),
-            "utan": self.res_utan_var.get(),
-            "sanfuku": self.res_sanfuku_var.get(),
-            "santan": self.res_santan_var.get(),
-        }
-
-        if not any(bet_types_to_run.values()):
-            messagebox.showwarning("バックテスト実行", "対象の馬券種が選択されていません。")
-            return
-
-        # バックテスト実行（スレッド）
-        self.run_in_thread(self._run_result_analysis_thread, start_dt, end_dt, bet_types_to_run, analysis_type)
-
-    def _run_result_analysis_thread(self, start_dt, end_dt, bet_types_to_run, analysis_type):
-        """結果分析（バックテスト）の非同期処理（完全版・省略なし）"""
-        import time
-        import pandas as pd # type: ignore
-        import numpy as np # type: ignore
-        import matplotlib.pyplot as plt # type: ignore # グラフ表示用に必要
-        import traceback
-
-        # この関数内の try...except は、予期せぬエラー全体を捕捉するためのもの
-        try:
-            start_time = _time.time()
-            self.root.after(0, lambda: self.update_status(f"バックテスト実行中 ({start_dt.date()}～{end_dt.date()})..."))
-            print(f"\n--- バックテスト開始 ({start_dt.date()} ～ {end_dt.date()}) ---")
-
-            # --- 1. 対象期間のデータ抽出 ---
-            if self.combined_data is None or self.combined_data.empty:
-                 self.root.after(0, lambda: messagebox.showwarning("データエラー", "データが読み込まれていません。")); self.root.after(0, lambda: self.update_status("準備完了")); return
-
-            date_col = None
-            if 'date' in self.combined_data.columns and pd.api.types.is_datetime64_any_dtype(self.combined_data['date']): date_col = 'date'
-            elif 'race_date' in self.combined_data.columns and pd.api.types.is_datetime64_any_dtype(self.combined_data['race_date']): date_col = 'race_date'
-
-            # デバッグプリントは一旦削除 (必要なら復活させる)
-            # print(f"DEBUG: Filtering data between {start_dt} ...")
-
-            if date_col is None:
-                 self.root.after(0, lambda: messagebox.showerror("データエラー", "日付列が見つからないか、日付型ではありません。")); self.root.after(0, lambda: self.update_status("エラー: 日付列不正")); return
-
-            try:
-                 backtest_data = self.combined_data[
-                     (self.combined_data[date_col] >= start_dt) &
-                     (self.combined_data[date_col] <= end_dt)
-                 ].copy()
-                 # print(f"DEBUG: Shape of backtest_data after filtering: {backtest_data.shape}")
-            except Exception as e_filter:
-                 print(f"!!! Error during date filtering !!!"); traceback.print_exc()
-                 self.root.after(0, lambda: messagebox.showerror("エラー", f"期間でのデータ絞り込み中にエラー:\n{e_filter}")); self.root.after(0, lambda: self.update_status("エラー: 期間フィルター失敗")); return
-
-            if backtest_data.empty:
-                self.root.after(0, lambda: messagebox.showinfo("バックテスト結果", "指定された期間に該当するレースデータがありません。"))
-                self.root.after(0, lambda: self.update_status("バックテスト完了: 対象データなし"))
-                return
-
-            print(f"バックテスト対象レース数（推定）: {backtest_data['race_id'].nunique()}")
-            self.update_status("バックテスト: 指数計算中(レース毎)...")
-            print("バックテスト: レース毎に指数を計算します...")
-
-            # --- 払い戻しデータ準備 ---
-            payout_dict_for_sim = {p['race_id']: p for p in self.payout_data if 'race_id' in p}
-
-            # --- 3. 購入シミュレーションループ ---
-            simulation_results = []; total_investment = 0; total_return = 0; total_bets = 0; total_hits = 0
-            unique_race_ids = backtest_data['race_id'].unique(); num_races_total = len(unique_race_ids)
-
-            for i, race_id in enumerate(unique_race_ids):
-                if i % 10 == 0: self.update_status(f"シミュレーション中... ({i}/{num_races_total})")
-                race_df = backtest_data[backtest_data['race_id'] == race_id].copy();
-                if race_df.empty: continue
-                race_info_row = race_df.iloc[0]
-                race_conditions = {
-                    'course_type': race_info_row.get('course_type'),
-                    'distance': pd.to_numeric(race_info_row.get('distance'), errors='coerce'),
-                    'track_name': race_info_row.get('track_name'),
-                    'baba': race_info_row.get('track_condition')
-                }
-                if pd.isna(race_conditions['distance']): continue;
-                race_conditions['distance'] = int(race_conditions['distance'])
-
-                race_indices = []
-                for index, row in race_df.iterrows(): # 指数計算ループ
-                    horse_id = row.get('horse_id'); umaban = row.get('Umaban');
-                    if not horse_id: continue
-                    # --- 指数計算（詳細取得含む）---
-                    # この部分は時間がかかるので注意
-                    details = self.get_horse_details(str(horse_id))
-                    index_val, index_comp = self.calculate_original_index(details, race_conditions)
-                    race_indices.append({'Umaban': umaban, 'Index': index_val})
-                if not race_indices: continue
-
-                race_indices.sort(key=lambda x: x.get('Index', -float('inf')), reverse=True) # Indexがない場合も考慮
-                if not race_indices: continue
-
-                # --- 購入判断 (戦略: 指数1位の複勝を100円) ---
-                bet_target_umaban_obj = race_indices[0].get('Umaban')
-                if bet_target_umaban_obj is None or not str(bet_target_umaban_obj).isdigit(): continue
-                bet_target_umaban = int(bet_target_umaban_obj)
-                bet_amount = 100
-                total_investment += bet_amount; total_bets += 1
-
-                # --- 結果照合 ---
-                payout_info = payout_dict_for_sim.get(race_id); hit = False; pay = 0
-                if payout_info and '複勝' in payout_info:
-                    place_pay_info = payout_info['複勝']
-                    if '馬番' in place_pay_info and '払戻金' in place_pay_info:
-                        try:
-                            payout_numbers = [int(n) for n in place_pay_info.get('馬番', []) if isinstance(n, str) and n.isdigit()]
-                            payout_amounts = [int(p) for p in place_pay_info.get('払戻金', []) if p is not None]
-                            if len(payout_numbers) == len(payout_amounts) and bet_target_umaban in payout_numbers:
-                               hit_index = payout_numbers.index(bet_target_umaban); pay = payout_amounts[hit_index]
-                               total_return += pay; total_hits += 1; hit = True
-                        except (ValueError, IndexError, TypeError) as e_pay_parse: print(f"警告: レース {race_id} の複勝払戻情報の解析エラー: {e_pay_parse}")
-
-                simulation_results.append({
-                    'race_id': race_id,
-                    'date': race_df[date_col].iloc[0],
-                    'bet_type': '複勝',
-                    'bet_target': bet_target_umaban,
-                    'investment': bet_amount,
-                    'return': pay,
-                    'hit': hit
-                })
-
-            # --- 4. 結果集計 ---
-            if total_bets > 0:
-                profit = total_return - total_investment
-                roi = total_return / total_investment if total_investment > 0 else 0
-                hit_rate = total_hits / total_bets
-            else:
-                profit = 0; roi = 0; hit_rate = 0; total_investment = 0; total_return = 0; total_hits = 0 # num_races_totalは上で定義済み
-
-            # --- 5. 結果表示 ---
-            # サマリー表示
-            summary = f"--- バックテスト結果 ({start_dt.date()} ～ {end_dt.date()}) ---\n"
-            summary += f"対象レース数: {num_races_total}\n"
-            summary += f"総購入レース数: {total_bets}\n"
-            summary += f"総投資額: {total_investment:,.0f} 円\n"
-            summary += f"総回収額: {total_return:,.0f} 円\n"
-            summary += f"総収支: {profit:,.0f} 円\n"
-            summary += f"回収率 (ROI): {roi:.1%}\n"
-            summary += f"的中率: {hit_rate:.1%} ({total_hits}/{total_bets})\n"
-            summary += "\n【実行戦略】\n- 指数1位の馬の複勝を100円購入\n"
-
-            # === ★★★ UI更新処理を分離 ★★★ ===
-            # サマリーテキストの更新を依頼
-            self.root.after(0, self._update_summary_text, summary)
-            # グラフ描画の更新を依頼
-            graph_title = '収支推移 (指数1位複勝)' # グラフタイトルを生成
-            self.root.after(0, self._draw_result_graph, simulation_results, analysis_type, graph_title)
-            # === ★★★ 修正ここまで ★★★ ===
-
-            # グラフ表示 (収支推移)
-            self.result_figure.clear() # 先にクリア
-            ax = self.result_figure.add_subplot(111)
-            if simulation_results:
-                 sim_df = pd.DataFrame(simulation_results)
-                 sim_df['profit'] = sim_df['return'] - sim_df['investment']
-                 sim_df['cumulative_profit'] = sim_df['profit'].cumsum()
-                 # date列がdatetime型でない場合があるため変換を試みる
-                 try:
-                     sim_df['date'] = pd.to_datetime(sim_df['date'])
-                     sim_df = sim_df.sort_values(by='date') # 日付でソートしてからプロット
-                     ax.plot(sim_df['date'], sim_df['cumulative_profit'], marker='.', linestyle='-')
-                 except Exception as e_plot:
-                     print(f"グラフ描画エラー（日付データ）: {e_plot}")
-                     ax.text(0.5, 0.5, 'グラフ描画エラー', ha='center', va='center')
-
-                 ax.set_xlabel('日付')
-                 ax.set_ylabel('累計収支 (円)')
-                 ax.set_title('収支推移 (指数1位複勝)')
-                 try: # autofmt_xdateがエラーを起こすことがあるためtry-except
-                      self.result_figure.autofmt_xdate()
-                 except:
-                      pass
-                 ax.grid(True, linestyle='--', alpha=0.6)
-            else:
-                 ax.text(0.5, 0.5, 'シミュレーション結果なし', ha='center', va='center')
-                 ax.set_title('収支推移 (データなし)')
-
-            self.root.after(0, self.result_canvas.draw) # グラフ描画をUIスレッドに依頼
-            end_time = time.time()
-            print(f"--- バックテスト完了 ({end_time - start_time:.2f} 秒) ---")
-            self.root.after(0, lambda: self.update_status("バックテスト完了"))
-
-        # === ここから except ブロック (省略せずに記述) ===
-        except Exception as e:
-            print(f"!!! Error in _run_result_analysis_thread !!!")
-            traceback.print_exc()
-            # エラー時もUI更新を試みる (lambdaを修正)
-            self.root.after(0, lambda err=e: messagebox.showerror("バックテストエラー", f"バックテスト実行中にエラーが発生しました:\n{err}"))
-            self.root.after(0, lambda err=e: self.update_status(f"エラー: バックテスト失敗 ({err})"))
-            # エラー時は空のデータで表示をクリア
-            self.root.after(0, self._update_summary_text, "エラーが発生しました。")
-            self.root.after(0, self._draw_result_graph, [], "エラー", "エラー") # 空リストとエラータイトル
-
-    # --- バックテスト結果表示用ヘルパーメソッド (新規追加) ---
-    def _update_summary_text(self, summary_content):
-        """結果検証タブのサマリーテキストエリアを更新"""
-        try:
-            self.summary_text.delete(1.0, tk.END)
-            self.summary_text.insert(tk.END, summary_content)
-            print("DEBUG: Summary text updated in UI.")
-        except Exception as e:
-            print(f"ERROR updating summary text: {e}")
-            traceback.print_exc()
-
-    def _draw_result_graph(self, simulation_results, analysis_type, title="収支推移"):
-        """結果検証タブのグラフを描画"""
-        print(f"DEBUG: Drawing result graph for type: {analysis_type}") #デバッグ用
-        try:
-            self.result_figure.clear()
-            ax = self.result_figure.add_subplot(111)
-
-            if analysis_type == "収支推移":
-                if simulation_results: # 結果がある場合のみ描画
-                    sim_df = pd.DataFrame(simulation_results)
-                    # date列をdatetimeに変換し、ソート
-                    try:
-                        sim_df['date'] = pd.to_datetime(sim_df['date'])
-                        sim_df = sim_df.sort_values(by='date')
-                        sim_df['profit'] = sim_df['return'] - sim_df['investment']
-                        sim_df['cumulative_profit'] = sim_df['profit'].cumsum()
-                        # グラフ描画
-                        ax.plot(sim_df['date'], sim_df['cumulative_profit'], marker='.', linestyle='-')
-                        ax.set_xlabel('日付')
-                        ax.set_ylabel('累計収支 (円)')
-                        ax.set_title(title) # 引数で受け取ったタイトルを使用
-                        self.result_figure.autofmt_xdate(rotation=30) # ラベル回転角度調整
-                        ax.grid(True, linestyle='--', alpha=0.6)
-                    except Exception as e_plot:
-                        print(f"ERROR: Failed to plot profit curve: {e_plot}")
-                        ax.text(0.5, 0.5, 'グラフ描画エラー', ha='center', va='center')
-                        ax.set_title(title)
-                else:
-                    ax.text(0.5, 0.5, 'シミュレーション結果なし', ha='center', va='center')
-                    ax.set_title(title + " (データなし)")
-
-            # --- 他の分析タイプ（グラフ）もここに追加 ---
-            elif analysis_type == "馬券種別ROI":
-                 # TODO: investments_by_type, returns_by_type が必要
-                 ax.text(0.5, 0.5, '馬券種別ROI\n(グラフ未実装)', ha='center', va='center')
-                 ax.set_title("馬券種別ROI (未実装)")
-            elif analysis_type == "的中率":
-                 # TODO: hit_counts, bet_counts が必要
-                 ax.text(0.5, 0.5, '的中率グラフ\n(未実装)', ha='center', va='center')
-                 ax.set_title("的中率 (未実装)")
-            # ... 他のグラフタイプ ...
-            else:
-                 ax.text(0.5, 0.5, f'{analysis_type}\n(グラフ未実装)', ha='center', va='center')
-                 ax.set_title(f"{analysis_type} (未実装)")
-
-            self.result_figure.tight_layout()
-            self.result_canvas.draw() # ここで描画を更新
-            print("DEBUG: Result graph drawn/updated.")
-
-        except Exception as e:
-            print(f"!!! Error in _draw_result_graph !!!")
-            traceback.print_exc()
-            try: # エラー時もクリアを試みる
-                 self.result_figure.clear(); ax = self.result_figure.add_subplot(111)
-                 ax.text(0.5, 0.5, 'グラフ描画エラー', ha='center', va='center'); ax.set_title("エラー")
-                 self.result_canvas.draw()
-            except: pass # クリアも失敗したら何もしない
-
-    def save_result_analysis(self):
-        """バックテスト結果のグラフとサマリーを保存"""
-        save_dir = self.settings.get("results_dir", ".")
-        analysis_type = self.result_type_var.get()
-        start_date = self.result_from_year_var.get() + self.result_from_month_var.get()
-        end_date = self.result_to_year_var.get() + self.result_to_month_var.get()
-        base_filename = f"backtest_{start_date}-{end_date}_{analysis_type}_{datetime.now().strftime('%Y%m%d%H%M')}"
-
-        # --- グラフ保存 ---
-        graph_file_path = filedialog.asksaveasfilename(
-            title="バックテストグラフを保存",
-            initialdir=save_dir,
-            initialfile=f"{base_filename}.png",
-            defaultextension=".png",
-            filetypes=[("PNG画像", "*.png"), ("JPEG画像", "*.jpg"), ("すべてのファイル", "*.*")]
-        )
-        if graph_file_path:
-            try:
-                self.result_figure.savefig(graph_file_path, bbox_inches='tight')
-                self.update_status(f"バックテストグラフを保存しました: {graph_file_path}")
-                # messagebox.showinfo("グラフ保存", "バックテストグラフを保存しました。") # 連続保存を考慮してコメントアウトも可
-            except Exception as e:
-                 messagebox.showerror("保存エラー", f"グラフの保存中にエラーが発生しました:\n{e}")
-                 self.update_status("エラー: グラフ保存失敗")
-                 return # グラフ保存失敗時はテキスト保存もしない
-
-        # --- サマリーテキスト保存 ---
-        summary_content = self.summary_text.get(1.0, tk.END).strip()
-        if summary_content: # サマリーがあればテキストファイルも保存するか尋ねる
-            if messagebox.askyesno("サマリー保存確認", "バックテストのサマリー結果もテキストファイルとして保存しますか？"):
-                text_file_path = filedialog.asksaveasfilename(
-                    title="バックテストサマリーを保存",
-                    initialdir=save_dir,
-                    initialfile=f"{base_filename}.txt", # 拡張子をtxtに
-                    defaultextension=".txt",
-                    filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")]
-                )
-                if text_file_path:
-                    try:
-                        with open(text_file_path, "w", encoding="utf-8") as f:
-                            f.write(summary_content)
-                        self.update_status(f"グラフとサマリーを保存しました")
-                        messagebox.showinfo("保存完了", "バックテストのグラフとサマリーを保存しました。")
-                    except Exception as e:
-                        messagebox.showerror("保存エラー", f"サマリーの保存中にエラーが発生しました:\n{e}")
-                        self.update_status("エラー: サマリー保存失敗")
-        elif graph_file_path: # グラフだけ保存した場合
-             messagebox.showinfo("グラフ保存", "バックテストグラフを保存しました。")
-
-
-    # --- Settings ---
-    def get_default_settings(self):
-        """デフォルト設定を返す"""
-        app_data_dir = os.path.join(os.path.expanduser("~"), "HorseRacingAnalyzer")
-        return {
-            "min_expected_value": 1.1, # デフォルト値を少し下げる
-            "min_probability": 0.05, # デフォルト値を少し下げる
-            "kelly_fraction": 0.1,  # デフォルトをより安全な値に (10%ケリー)
-            "max_bet_ratio": 0.05, # 5%
-            "data_dir": os.path.join(app_data_dir, "data"),
-            "models_dir": os.path.join(app_data_dir, "models"),
-            "results_dir": os.path.join(app_data_dir, "results")
-        }
-
-    def load_settings(self):
-        """設定ファイルの読み込み"""
-        defaults = self.get_default_settings()
-        if os.path.exists(self.settings_file):
-            try:
-                with open(self.settings_file, "r", encoding="utf-8") as f:
-                    loaded_settings = json.load(f)
-                    # デフォルトにないキーや型が違う場合を考慮してマージ
-                    valid_settings = defaults.copy()
-                    for key, default_value in defaults.items():
-                         if key in loaded_settings and type(loaded_settings[key]) == type(default_value):
-                             valid_settings[key] = loaded_settings[key]
-                         elif key in loaded_settings:
-                              print(f"設定ファイル '{key}' の型が不正なためデフォルト値を使用します。", file=sys.stderr)
-                    self.settings = valid_settings
-                print("設定ファイルを読み込みました:", self.settings_file)
-            except json.JSONDecodeError:
-                 messagebox.showerror("設定エラー", f"設定ファイル ({self.settings_file}) が破損しています。デフォルト設定を使用します。")
-                 self.settings = defaults
-            except Exception as e:
-                 messagebox.showwarning("設定読み込みエラー", f"設定ファイルの読み込み中にエラーが発生しました: {e}\nデフォルト設定を使用します。")
-                 self.settings = defaults
-        else:
-            print("設定ファイルが見つからないため、デフォルト設定を使用します。")
-            self.settings = defaults
-            # 初回起動時などにデフォルト設定ファイルを作成する（オプション）
-            # try:
-            #     os.makedirs(self.app_data_dir, exist_ok=True)
-            #     with open(self.settings_file, "w", encoding="utf-8") as f:
-            #         json.dump(self.settings, f, indent=4)
-            #     print("デフォルト設定ファイルを作成しました:", self.settings_file)
-            # except Exception as e:
-            #     print(f"デフォルト設定ファイルの作成に失敗しました: {e}", file=sys.stderr)
-
-    def reflect_settings_to_ui(self):
-        """現在の設定値を設定タブのUIに反映"""
-        self.settings_min_ev_var.set(str(self.settings.get("min_expected_value", "")))
-        self.settings_min_prob_var.set(str(self.settings.get("min_probability", "")))
-        self.settings_kelly_var.set(str(self.settings.get("kelly_fraction", "")))
-        self.settings_max_bet_var.set(str(self.settings.get("max_bet_ratio", "")))
-        self.settings_data_dir_var.set(self.settings.get("data_dir", ""))
-        self.settings_models_dir_var.set(self.settings.get("models_dir", ""))
-        self.settings_results_dir_var.set(self.settings.get("results_dir", ""))
-
-        # 予測タブの戦略表示も更新
-        if hasattr(self, 'pred_min_ev_label'): # UI初期化後かチェック
-            self.pred_min_ev_label.config(text=f"{self.settings.get('min_expected_value', 'N/A'):.2f}")
-            self.pred_min_prob_label.config(text=f"{self.settings.get('min_probability', 'N/A'):.3f}")
-            self.pred_kelly_label.config(text=f"{self.settings.get('kelly_fraction', 'N/A'):.2f}")
-            self.pred_max_bet_label.config(text=f"{self.settings.get('max_bet_ratio', 'N/A'):.1%}")
-
-
-    def save_settings(self):
-        """UIから設定値を取得し、ファイルに保存"""
-        try:
-            new_settings = {
-                "min_expected_value": float(self.settings_min_ev_var.get()),
-                "min_probability": float(self.settings_min_prob_var.get()),
-                "kelly_fraction": float(self.settings_kelly_var.get()),
-                "max_bet_ratio": float(self.settings_max_bet_var.get()),
-                "data_dir": self.settings_data_dir_var.get(),
-                "models_dir": self.settings_models_dir_var.get(),
-                "results_dir": self.settings_results_dir_var.get()
-            }
-
-            # 値のバリデーション (例)
-            if not (0 < new_settings["kelly_fraction"] <= 1):
-                 raise ValueError("ケリー係数は0より大きく1以下である必要があります。")
-            if not (0 < new_settings["max_bet_ratio"] <= 1):
-                 raise ValueError("最大投資比率は0より大きく1以下である必要があります。")
-            if not (0 <= new_settings["min_probability"] < 1):
-                 raise ValueError("最小予測確率は0以上1未満である必要があります。")
-            if new_settings["min_expected_value"] <= 0:
-                 raise ValueError("最小期待値は0より大きい必要があります。")
-
-            # ディレクトリが存在するか確認し、なければ作成を試みる
-            for dir_path in [new_settings["data_dir"], new_settings["models_dir"], new_settings["results_dir"]]:
-                 if not os.path.exists(dir_path):
-                     try:
-                         os.makedirs(dir_path)
-                         print(f"ディレクトリを作成しました: {dir_path}")
-                     except Exception as e:
-                         # 作成失敗しても設定は保存するが警告は出す
-                         messagebox.showwarning("ディレクトリ作成失敗", f"指定されたディレクトリが見つからず、作成もできませんでした:\n{dir_path}\nエラー: {e}")
-
-            # 設定ファイルに保存
-            self.settings = new_settings # アプリ内部の設定を更新
-            with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=4, ensure_ascii=False)
-
-            self.update_status("設定を保存しました。")
-            messagebox.showinfo("設定保存", "設定を保存しました。")
-            self.reflect_settings_to_ui() # 予測タブの表示も更新
-
-        except ValueError as ve:
-            messagebox.showerror("設定値エラー", f"入力値が不正です:\n{ve}")
-        except Exception as e:
-            messagebox.showerror("設定保存エラー", f"設定の保存中にエラーが発生しました:\n{e}")
-            self.update_status("エラー: 設定保存失敗")
-
-    def reset_settings(self):
-        """設定をデフォルト値に戻す"""
-        if messagebox.askyesno("設定リセット", "すべての設定をデフォルト値に戻しますか？\n保存されていない変更は失われます。", icon='warning'):
-            self.settings = self.get_default_settings()
-            self.reflect_settings_to_ui()
-            # デフォルト設定をファイルに保存するかはオプション（上書き確認をしてもよい）
-            # self.save_settings()
-            self.update_status("設定をデフォルトにリセットしました。")
-            messagebox.showinfo("設定リセット", "設定をデフォルト値にリセットしました。\n「設定を保存」ボタンを押して変更を確定してください。")
-
-
-    # --- Sample Data Generation ---
-    def generate_sample_data(self):
-        """サンプルデータの生成（デバッグ/デモ用）"""
-        print("サンプルデータを生成します...")
-        # レースデータ
-        num_races = 100
-        race_ids = [f'2023{i:04d}' for i in range(1, num_races + 1)]
-        tracks = ['東京', '中山', '阪神', '京都', '中京', '小倉', '福島', '新潟', '札幌', '函館']
-        course_types = ['芝', 'ダート']
-        weathers = ['晴', '曇', '小雨', '雨']
-        conditions = ['良', '稍重', '重', '不良']
-        race_data = {
-            'race_id': race_ids,
-            'race_date': pd.to_datetime([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}' for i in range(1, num_races + 1)]),
-            'track': [random.choice(tracks) for _ in range(num_races)],
-            'distance': [random.choice([1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2500, 3000, 3200]) for _ in range(num_races)],
-            'course_type': [random.choice(course_types) for _ in range(num_races)],
-            'weather': [random.choice(weathers) for _ in range(num_races)],
-            'track_condition': [random.choice(conditions) for _ in range(num_races)]
-            # TODO: レース名、グレードなどの列も必要に応じて追加
-        }
-        self.race_data = pd.DataFrame(race_data)
-
-        # 馬データ
-        num_horses = 200
-        horse_ids = [f'H{i:04d}' for i in range(1, num_horses + 1)]
-        sexes = ['牡', '牝', 'セ']
-        fathers = [f'父馬{chr(65+random.randint(0,25))}' for _ in range(num_horses)] # 父馬A-Z
-        mothers = [f'母馬{chr(65+random.randint(0,25))}' for _ in range(num_horses)] # 母馬A-Z
-        horse_data = {
-            'horse_id': horse_ids,
-            'horse_name': [f'サンプル馬{i}' for i in range(1, num_horses + 1)],
-            'birth_year': [random.randint(2018, 2021) for _ in range(num_horses)], # 生まれ年調整
-            'sex': [random.choice(sexes) for _ in range(num_horses)],
-            'father': fathers,
-            'mother': mothers
-            # TODO: 生産者、馬主などの列も必要に応じて追加
-        }
-        self.horse_data = pd.DataFrame(horse_data)
-
-        # 結果データ
-        num_results = 0
-        results_list = []
-        jockeys = [f'騎手{chr(65+i)}' for i in range(30)] # 騎手A-Z...
-        for race_id in self.race_data['race_id']:
-            horses_count = random.randint(8, 18)
-            selected_horses = random.sample(self.horse_data['horse_id'].tolist(), horses_count)
-            ranks = list(range(1, horses_count + 1))
-            random.shuffle(ranks)
-            # 単勝オッズ生成 (人気順になるように多少調整)
-            win_probs = np.random.dirichlet(np.ones(horses_count) * random.uniform(0.5, 1.5)) # ディリクレ分布
-            win_odds = np.round(1 / win_probs * 0.8, 1) # 控除率20%と仮定
-            win_odds = np.clip(win_odds, 1.1, 500) # オッズ範囲制限
-            odds_dict = {horse_id: odd for horse_id, odd in zip(selected_horses, win_odds)}
-
-            for i, horse_id in enumerate(selected_horses):
-                result = {
-                    'race_id': race_id,
-                    'horse_id': horse_id,
-                    'jockey': random.choice(jockeys),
-                    'weight': random.randint(440, 540), # 馬体重
-                    'odds': odds_dict[horse_id], # 単勝オッズ
-                    'rank': ranks[i]
-                    # TODO: 斤量、上がりタイム、コーナー通過順位、配当金などの列も必要
-                }
-                results_list.append(result)
-                num_results += 1
-
-        self.result_data = pd.DataFrame(results_list)
-        print(f"サンプルデータ生成完了: Races={len(self.race_data)}, Horses={len(self.horse_data)}, Results={len(self.result_data)}")
-
-# --- Main Execution ---
-def main():
-    root = tk.Tk()
-    # DPIスケーリング対応 (Windows)
-    try:
-        from ctypes import windll
-        windll.shcore.SetProcessDpiAwareness(1) # DPI Awareに設定
-    except Exception as e:
-        print(f"DPIスケーリング設定に失敗しました: {e}", file=sys.stderr)
-
-    app = HorseRacingAnalyzerApp(root)
-
-    # ウィンドウを閉じるときの処理
-    def on_closing():
-        # 必要なら設定を自動保存するなどの処理
-        # if messagebox.askokcancel("終了確認", "アプリケーションを終了しますか？"):
-        #     # app.save_settings() # 自動保存する場合
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    root.mainloop()
-
+# 以下の部分は変更の必要はありませんが、ファイルの最後にmain関数や
+# if __name__ == "__main__": があることを確認してください。
 if __name__ == "__main__":
-    # スクリプトが直接実行された場合にmain関数を呼び出す
-    
-        # --- ★★★ ここからテストコードを追加 ★★★ ---
-    try:
-        # GUIなしでテストするために一時的にインスタンスを作成
-        # Tkinterの初期化が必要な場合があるためダミーウィンドウを作成
-        temp_root = tk.Tk()
-        temp_root.withdraw() # ウィンドウは表示しない
-        app_instance_for_test = HorseRacingAnalyzerApp(temp_root) # アプリのインスタンスを作成
-
-        # テストしたい馬IDを指定 (例: 2015104498 はアーモンドアイ)
-        test_horse_id = "2015104498"
-        # print(f"\n--- Testing get_horse_details for horse_id: {test_horse_id} ---")
-
-        # get_horse_details 関数を呼び出す
-        details = app_instance_for_test.get_horse_details(test_horse_id)
-
-        # 結果を出力
-        # print("\n--- 馬詳細テスト結果 ---")
-        # print(details)
-        # print("----------------------\n")
-
-        # テストが終わったらダミーウィンドウを破棄
-        temp_root.destroy()
-
-    except Exception as test_e:
-        print(f"馬詳細テスト中にエラーが発生しました: {test_e}")
-        import traceback
-        traceback.print_exc()
-    # --- ★★★ テストコード追加ここまで ★★★ ---
-    
-    main()
-
+    root = tk.Tk()
+    app = HorseRacingAnalyzerApp(root)
+    root.mainloop()
