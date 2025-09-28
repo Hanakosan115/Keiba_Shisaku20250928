@@ -1,4 +1,3 @@
-# テスト
 import os
 
 import sys
@@ -1888,7 +1887,6 @@ class HorseRacingAnalyzerApp:
             traceback.print_exc()
             setattr(self, stats_attr_name, {}) # エラー時は空にする
             self.update_status(f"エラー: {sire_column} 成績計算失敗")
-
     # --- ★★★ 枠番別統計計算メソッド (新規追加) ★★★ ---
     def _calculate_gate_stats(self):
         """
@@ -3700,7 +3698,6 @@ class HorseRacingAnalyzerApp:
 
         # 初期状態でローカルファイルウィジェットを表示
         self.toggle_local_file_widgets()
-
 
     def toggle_local_file_widgets(self, event=None):
         """データソースに応じてウィジェットの表示/非表示を切り替える"""
