@@ -4531,85 +4531,64 @@ class HorseRacingAnalyzerApp:
         except Exception as e:
             traceback.print_exc()
             self.root.after(0, lambda err=e: messagebox.showerror("予測処理エラー", f"予測処理中に予期せぬエラー: {err}"))
-   
+    
     def create_recommendation_text(self, horses_info, simulation_results):
         """
-        【戦略判断機能つき・最終版】
-        予測確率の分布を分析し、「絶対軸馬」「混戦」などのレースパターンを診断。
-        パターンに応じて、軸1頭ながし、ボックス買い、ケンなどを自動で切り替えて推奨する。
+        【改訂版】レースパターンに応じて「複勝・ワイド」「フォーメーション」を推奨する
         """
         text = "【AIレース診断＆推奨買い目】\n"
         text += "----------------------------------\n"
 
-        # --- STEP 1: 予測データが十分にあるか確認 ---
         valid_horses = [h for h in horses_info if pd.notna(h.get('win_proba')) and pd.notna(h.get('place_proba'))]
         if len(valid_horses) < 5:
-            return "予測データが不足しているため、買い目を生成できません。"
+            return text + "予測データ不足のため、買い目を生成できません。"
 
-        # 単勝確率順にソート
         sorted_by_win_proba = sorted(valid_horses, key=lambda x: x.get('win_proba', 0), reverse=True)
         
-        # --- STEP 2: レースパターンの診断 ---
         win_proba_top1 = sorted_by_win_proba[0].get('win_proba', 0)
         win_proba_top2 = sorted_by_win_proba[1].get('win_proba', 0)
         win_proba_top3 = sorted_by_win_proba[2].get('win_proba', 0)
 
-        race_pattern = "不明"
-        # パターン1: 「絶対軸馬」パターン
-        if win_proba_top1 > 0.35 and (win_proba_top1 > win_proba_top2 * 1.8): # 1位が35%以上、かつ2位の1.8倍以上
+        # レースパターンの診断
+        race_pattern = "標準"
+        if win_proba_top1 > 0.35 and (win_proba_top1 > win_proba_top2 * 1.8):
             race_pattern = "絶対軸馬"
-            text += f"診断: 信頼できる軸馬がいます (単勝確率: {win_proba_top1:.1%})\n"
-            text += "推奨戦略: 軸1頭ながし\n\n"
-        # パターン2: 「混戦」パターン
-        elif win_proba_top1 < 0.25 and (win_proba_top1 - win_proba_top3) < 0.08: # 1位の確率が低く、1位と3位の差が小さい
+        elif win_proba_top1 < 0.25 and (win_proba_top1 - win_proba_top3) < 0.08:
             race_pattern = "混戦"
-            text += f"診断: 上位人気は混戦模様です\n"
-            text += "推奨戦略: ボックス買い\n\n"
-        # パターン3: 上記以外は「標準」パターン
-        else:
-            race_pattern = "標準"
-            text += f"診断: 標準的なレースです\n"
-            text += "推奨戦略: 軸1頭ながし\n\n"
 
-        # --- STEP 3: 診断パターンに応じた買い目を生成 ---
-        if race_pattern == "絶対軸馬" or race_pattern == "標準":
-            axis_horse = sorted_by_win_proba[0]
-            sorted_by_place_proba = sorted(valid_horses, key=lambda x: x.get('place_proba', 0), reverse=True)
-            opponent_horses = [h for h in sorted_by_place_proba if h.get('Umaban') != axis_horse.get('Umaban')][:5]
-            
-            axis_num = axis_horse.get('Umaban', '？')
-            opponent_nums = [h.get('Umaban', '？') for h in opponent_horses]
-            
-            text += f"◎ 軸馬 (単勝確率1位): {axis_num} {axis_horse.get('HorseName', '')}\n"
-            text += f"○ 相手 (複勝確率上位): {', '.join(map(str, opponent_nums))}\n\n"
-
-            from itertools import permutations, combinations
-            text += "◇ 3連複 (軸1頭ながし)\n"
-            if len(opponent_nums) >= 2:
-                for comb in combinations(opponent_nums, 2):
-                    text += f"  {axis_num} - {comb[0]} - {comb[1]}\n"
-            
-            text += "\nＸ 3連単 (軸1着固定ながし)\n"
-            if len(opponent_nums) >= 2:
-                for perm in permutations(opponent_nums, 2):
-                    text += f"  {axis_num} → {perm[0]} → {perm[1]}\n"
-
-        elif race_pattern == "混戦":
+        # パターンに応じた買い目をテキスト化
+        if race_pattern == "混戦":
+            text += "診断: 上位人気は混戦模様です\n"
+            text += "推奨戦略: 複勝・ワイドボックスでリスク分散\n\n"
             top3_horses = sorted_by_win_proba[:3]
             top3_numbers = [str(h.get('Umaban')) for h in top3_horses]
             
-            text += f"◎ 注目馬 (単勝確率Top3): {', '.join(top3_numbers)}\n\n"
-            
-            from itertools import combinations, permutations
-            text += "◇ 3連複 (ボックス)\n"
-            if len(top3_numbers) == 3:
-                text += f"  {'-'.join(top3_numbers)}\n"
-            text += "\n"
+            text += f"◎ 注目馬 (上位3頭): {', '.join(top3_numbers)}\n\n"
+            text += f"◇ 複勝 (1点)\n  {top3_numbers[0]}\n\n"
+            text += f"◇ ワイド (ボックス3点)\n  {top3_numbers[0]}-{top3_numbers[1]}\n"
+            text += f"  {top3_numbers[0]}-{top3_numbers[2]}\n"
+            text += f"  {top3_numbers[1]}-{top3_numbers[2]}\n"
+        else: # 絶対軸馬 or 標準
+            if race_pattern == "絶対軸馬":
+                text += f"診断: 信頼できる軸馬がいます (単勝確率: {win_proba_top1:.1%})\n"
+            else:
+                text += "診断: 標準的なレースです\n"
+            text += "推奨戦略: 3連単フォーメーション\n\n"
 
-            text += "Ｘ 3連単 (ボックス)\n"
-            if len(top3_numbers) == 3:
-                for perm in permutations(top3_numbers, 3):
-                    text += f"  {'→'.join(perm)}\n"
+            axis_horse = sorted_by_win_proba[0]
+            sorted_by_place_proba = sorted(valid_horses, key=lambda x: x.get('place_proba', 0), reverse=True)
+            opponents = [h for h in sorted_by_place_proba if h.get('Umaban') != axis_horse.get('Umaban')][:4]
+            
+            axis_num = str(axis_horse.get('Umaban', '？'))
+            opponent_nums = [str(h.get('Umaban', '？')) for h in opponents]
+
+            text += f"◎ 1列目 (軸): {axis_num}\n"
+            text += f"○ 2,3列目 (相手): {', '.join(opponent_nums)}\n\n"
+            text += "◇ 3連単フォーメーション (12点)\n"
+            text += f"  1着: {axis_num}\n"
+            text += f"  2着: {', '.join(opponent_nums)}\n"
+            text += f"  3着: {', '.join([n for n in opponent_nums if n != opponent_nums[0]])}\n"
+            text += "  (例: 4→12→8, 4→12→5, ...)\n"
         
         text += "----------------------------------\n"
         return text
@@ -4824,8 +4803,9 @@ class HorseRacingAnalyzerApp:
     
     def _run_result_analysis_thread(self, start_dt, end_dt, analysis_type):
         """
-        【デバッグ機能付き】特定のレースIDを検出した際に、AIが参照した
-        特徴量と算出した確率を全てコンソールに出力する。
+        【バックテスト機能・改修版】
+        指定期間内のレースに対して、現在のAIモデルで予測と買い目推奨をシミュレートし、
+        実際の払い戻しデータと照合して収支を計算する。
         """
         import pandas as pd
         import traceback
@@ -4833,12 +4813,13 @@ class HorseRacingAnalyzerApp:
         from itertools import permutations, combinations
         from collections import defaultdict
         import re
+        import os
 
         try:
             self.root.after(0, lambda: self.update_status("バックテスト準備中..."))
-            print("\n--- Web再取得による完全一致バックテスト 開始 ---")
+            print("\n--- バックテスト処理 開始 ---")
 
-            # --- 1. モデルロード ---
+            # --- 1. 必要なモデルと設定をロード ---
             self.load_model_from_file(model_filename="trained_lgbm_model_win.pkl", mode='win')
             win_model, win_features, win_imputation = self.trained_model, self.model_features, self.imputation_values_
             win_calibrator = self._load_pickle(os.path.join(self.settings.get("models_dir"), "calibrator_win.pkl"))
@@ -4853,7 +4834,7 @@ class HorseRacingAnalyzerApp:
                 self.root.after(0, lambda: messagebox.showerror("モデルエラー", "複勝予測モデルまたは関連ファイルが見つかりません。"))
                 return
 
-            # --- 2. 対象レースIDのリストアップ ---
+            # --- 2. 対象となるレースIDを期間で絞り込む ---
             date_col = 'date' if 'date' in self.combined_data.columns else 'race_date'
             temp_df = self.combined_data.copy()
             temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
@@ -4861,24 +4842,33 @@ class HorseRacingAnalyzerApp:
 
             if len(target_race_ids) == 0:
                 self.root.after(0, lambda: messagebox.showinfo("バックテスト結果", "指定期間に該当するレースデータがありません。"))
+                self.root.after(0, lambda: self.update_status("バックテスト完了: 対象レースなし"))
                 return
             
+            # 払い戻しデータを高速に検索できるよう、辞書形式に変換
             payouts_map = {str(p['race_id']): p for p in self.payout_data if 'race_id' in p}
 
-            # --- 3. バックテストループ ---
+            # --- 3. バックテストのメインループ ---
             simulation_results = []
-            total_investment = 0; total_return = 0
-            bet_counts = defaultdict(int); hit_counts = defaultdict(int)
+            total_investment = 0
+            total_return = 0
+            bet_counts = defaultdict(int)
+            hit_counts = defaultdict(int)
             races_bet_on = 0
             
-            detailed_log_path = os.path.join(self.settings.get("results_dir", "."), f"backtest_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            # 詳細ログの保存先
+            log_dir = self.settings.get("results_dir", ".")
+            os.makedirs(log_dir, exist_ok=True)
+            detailed_log_path = os.path.join(log_dir, f"backtest_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
             
             with open(detailed_log_path, 'w', encoding='utf-8-sig') as log_file:
-                log_file.write("="*50 + "\nバックテスト詳細ログ (Web再取得モード)\n" + "="*50 + "\n")
+                log_file.write("="*50 + "\nバックテスト詳細ログ\n" + "="*50 + "\n")
 
                 for i, race_id in enumerate(target_race_ids):
-                    self.root.after(0, lambda: self.update_status(f"バックテスト実行中... {i+1}/{len(target_race_ids)} (Web取得中)"))
+                    self.root.after(0, lambda i=i, total=len(target_race_ids): self.update_status(f"バックテスト実行中... {i+1}/{total}"))
                     
+                    # 予測の前提となる出馬表データを取得
+                    # 注: 実際のオッズはレース当日のものを使うのが理想ですが、ここでは出馬表確定時のオッズで代用します
                     web_data = self.get_shutuba_table(race_id)
                     if not web_data or not web_data.get('horse_list'):
                         log_file.write(f"\n--- ID: {race_id} の出馬表を取得できませんでした。スキップします。 ---\n")
@@ -4888,135 +4878,209 @@ class HorseRacingAnalyzerApp:
                     race_conditions = web_data.get('race_details', {})
                     predict_date = pd.to_datetime(race_conditions.get('RaceDate'), format='%Y年%m月%d日', errors='coerce')
                     race_conditions['RaceDate'] = predict_date
-                    race_conditions['baba'] = race_conditions.get('TrackCondition')
-
+                    
                     log_file.write(f"\n--- {predict_date.strftime('%Y-%m-%d')} {race_conditions.get('RaceName', '')} (ID: {race_id}) ---\n")
 
+                    # --- 各馬の特徴量を計算 ---
                     all_features_list = []
                     for _, horse_row in race_df.iterrows():
                         horse_details_for_calc = horse_row.to_dict()
-                        horse_id_str = str(horse_details_for_calc.get('horse_id', '')).split('.')[0]
-                        if horse_id_str and horse_id_str in self.horse_details_cache:
+                        horse_id_str = str(horse_details_for_calc.get('horse_id', ''))
+                        
+                        # 過去の戦績データをキャッシュから取得し、未来のデータ（データリーク）を排除
+                        if horse_id_str in self.horse_details_cache:
                             horse_full_details = self.horse_details_cache[horse_id_str]
                             if isinstance(horse_full_details, dict): horse_details_for_calc.update(horse_full_details)
-                            if isinstance(horse_details_for_calc.get('race_results'), list):
+                            if 'race_results' in horse_details_for_calc:
                                 past_results = [r for r in horse_details_for_calc['race_results'] if isinstance(r, dict) and pd.to_datetime(r.get('date'), errors='coerce') < predict_date]
                                 horse_details_for_calc['race_results'] = past_results
+
                         _, features_dict = self.calculate_original_index(horse_details_for_calc, race_conditions)
                         all_features_list.append(features_dict)
                     features_df = pd.DataFrame(all_features_list)
 
+                    # --- 確率を予測 ---
                     X_win = self._prepare_feature_vector(features_df, win_features, win_imputation)
                     calibrated_win_probas = win_calibrator.predict(win_model.predict_proba(X_win)[:, 1])
                     X_place = self._prepare_feature_vector(features_df, place_features, place_imputation)
                     calibrated_place_probas = place_calibrator.predict(place_model.predict_proba(X_place)[:, 1])
 
-                    # ================================================================= #
-                    # ▼▼▼【デバッグコード】問題のレースIDを検出したら思考の中身を出力 ▼▼▼
-                    # ================================================================= #
-                    if race_id == '202501010303':
-                        print("\n" + "#"*70)
-                        print(f"### デバッグ情報: レースID {race_id} のバックテスト時の評価内容 ###")
-                        print("#"*70)
-                        debug_df = features_df.copy()
-                        debug_df['補正単勝確率'] = calibrated_win_probas
-                        debug_df['補正複勝確率'] = calibrated_place_probas
-                        debug_df['Umaban'] = race_df['Umaban'].values
-                        debug_df['HorseName'] = race_df['HorseName'].values
-
-                        pd.set_option('display.max_rows', None)
-                        pd.set_option('display.max_columns', None)
-                        pd.set_option('display.width', 200)
-                        
-                        # 相手選びの基準となる「補正複勝確率」でソートして表示
-                        print(debug_df[['Umaban', 'HorseName', '補正単勝確率', '補正複勝確率', 'jra_近走1走前着順', '近走平均レースレベル', '父同条件複勝率', '騎手コース複勝率']].sort_values('補正複勝確率', ascending=False))
-                        
-                        pd.reset_option('all')
-                        print("#"*70 + "\n")
-                    # ================================================================= #
-
-                    horses_info = race_df[['Umaban', 'HorseName']].to_dict('records')
+                    # --- 買い目を生成 ---
+                    horses_info = race_df[['Umaban', 'HorseName', 'Odds']].to_dict('records')
                     for idx, horse in enumerate(horses_info):
-                        if pd.notna(horse['Umaban']):
-                            horse['win_proba'] = calibrated_win_probas[idx]
-                            horse['place_proba'] = calibrated_place_probas[idx]
-                        else:
-                            horse['win_proba'] = 0; horse['place_proba'] = 0
+                        horse['win_proba'] = calibrated_win_probas[idx]
+                        horse['place_proba'] = calibrated_place_probas[idx]
+
+                    # 予測タブで使っているのと同じロジックで推奨買い目をテキストとして生成
+                    recommendation_text = self.create_recommendation_text(horses_info, {})
+                    log_file.write(recommendation_text + "\n") # ログに推奨内容を記録
+
+                    # --- 買い目をパースして投資シミュレーション ---
+                    # create_recommendation_text のロジックを再利用して買い目を特定
+                    bets_for_this_race = self.get_bets_from_recommendation(horses_info)
                     
-                    bets_for_this_race = []
-                    valid_horses = [h for h in horses_info if h['win_proba'] > 0]
-                    sorted_by_win_proba = sorted(valid_horses, key=lambda x: x.get('win_proba', 0), reverse=True)
-                    if len(sorted_by_win_proba) >= 3:
-                        win_proba_top1, win_proba_top2, win_proba_top3 = sorted_by_win_proba[0].get('win_proba', 0), sorted_by_win_proba[1].get('win_proba', 0), sorted_by_win_proba[2].get('win_proba', 0)
-                        if win_proba_top1 > 0.35 and (win_proba_top1 > win_proba_top2 * 1.8): race_pattern = "絶対軸馬"
-                        elif win_proba_top1 < 0.25 and (win_proba_top1 - win_proba_top3) < 0.08: race_pattern = "混戦"
-                        else: race_pattern = "標準"
-
-                        if race_pattern in ["絶対軸馬", "標準"]:
-                            axis_horse = sorted_by_win_proba[0]
-                            sorted_by_place_proba = sorted(valid_horses, key=lambda x: x.get('place_proba', 0), reverse=True)
-                            opponents = [h for h in sorted_by_place_proba if h['Umaban'] != axis_horse['Umaban']][:5]
-                            if len(opponents) >= 2:
-                                for comb in combinations(opponents, 2): bets_for_this_race.append({'type': '三連複', 'numbers': tuple(sorted((int(axis_horse['Umaban']), int(comb[0]['Umaban']), int(comb[1]['Umaban']))))})
-                                for perm in permutations(opponents, 2): bets_for_this_race.append({'type': '三連単', 'numbers': (int(axis_horse['Umaban']), int(perm[0]['Umaban']), int(perm[1]['Umaban']))})
-                        
-                        elif race_pattern == "混戦":
-                            top3_horses = sorted_by_win_proba[:3]
-                            if len(top3_horses) == 3:
-                                top3_numbers = [int(h['Umaban']) for h in top3_horses]
-                                bets_for_this_race.append({'type': '三連複', 'numbers': tuple(sorted(top3_numbers))})
-                                for perm in permutations(top3_numbers, 3): bets_for_this_race.append({'type': '三連単', 'numbers': tuple(perm)})
-
-                    investment_this_race = 0; return_this_race = 0
+                    investment_this_race = 0
+                    return_this_race = 0
+                    
                     if bets_for_this_race:
                         payout_info = payouts_map.get(str(race_id))
                         if payout_info:
                             races_bet_on += 1
+                            log_file.write("【結果照合】\n")
+                            # 各買い目をチェック
                             for bet in bets_for_this_race:
-                                investment_this_race += 100; bet_counts[bet['type']] += 1
-                                payout_type_jp = bet['type'].replace('三連複', '3連複').replace('三連単', '3連単')
-                                is_hit = False
+                                investment_this_race += 100  # 1点100円と仮定
+                                bet_counts[bet['type']] += 1
                                 
-                                if payout_type_jp in payout_info:
-                                    for idx, win_comb_str in enumerate(payout_info[payout_type_jp].get('馬番', [])):
-                                        try:
-                                            win_nums_str = re.findall(r'\d+', str(win_comb_str))
-                                            if not win_nums_str: continue
-                                            win_nums = tuple(int(n) for n in win_nums_str)
-                                            if bet['type'] == '三連複': win_nums = tuple(sorted(win_nums))
-                                            
-                                            if bet['numbers'] == win_nums:
-                                                payout_val = payout_info[payout_type_jp]['払戻金'][idx]
-                                                if payout_val is not None:
-                                                    return_this_race += int(payout_val)
-                                                    hit_counts[bet['type']] += 1
-                                                    is_hit = True; break
-                                        except (ValueError, IndexError): continue
+                                payout, is_hit = self.check_bet_hit(bet, payout_info)
                                 
-                                if is_hit: log_file.write(f"  - [的中!] [{bet['type']}] {bet['numbers']} -> {int(payout_val)}円\n")
-                                else: log_file.write(f"  - [{bet['type']}] {bet['numbers']} -> 不的中\n")
+                                if is_hit:
+                                    return_this_race += payout
+                                    hit_counts[bet['type']] += 1
+                                    log_file.write(f"  - [的中!] [{bet['type']}] {bet['numbers']} -> {payout}円\n")
+                                else:
+                                    log_file.write(f"  - [{bet['type']}] {bet['numbers']} -> 不的中\n")
+                        else:
+                            log_file.write("【結果照合】-> 払い戻し情報が見つかりませんでした。\n")
                     
-                    total_investment += investment_this_race; total_return += return_this_race
+                    total_investment += investment_this_race
+                    total_return += return_this_race
                     simulation_results.append({'date': predict_date, 'investment': investment_this_race, 'return': return_this_race})
 
-                roi = (total_return / total_investment * 100) if total_investment > 0 else 0
-                summary = (f"推奨ロジック バックテスト ({start_dt.strftime('%Y/%m/%d')} - {end_dt.strftime('%Y/%m/%d')})\n" + "-"*34 + f"\n対象レース数: {len(target_race_ids)} R\n投資レース数: {races_bet_on} R\n" + f"総投資額: {total_investment:,.0f} 円\n総回収額: {total_return:,.0f} 円\n" + f"収支: {total_return - total_investment:,.0f} 円\n回収率 (ROI): {roi:.2f} %\n" + "-"*34 + "\n【馬券種別成績】\n")
-                all_bet_types = sorted(list(set(list(bet_counts.keys()) + list(hit_counts.keys()))))
-                for bet_type in all_bet_types:
-                    count = bet_counts.get(bet_type, 0); hit = hit_counts.get(bet_type, 0)
-                    hit_rate = (hit / count * 100) if count > 0 else 0
-                    summary += f"◆ {bet_type}:\n  - 的中率: {hit} / {count} ({hit_rate:.2f} %)\n"
-                
-                log_file.seek(0)
-                log_file.write("="*50 + "\nバックテストサマリー\n" + "="*50 + "\n" + summary + "\n" + "="*50 + "\n各レースの購入詳細\n" + "="*50 + "\n")
+            # --- 4. 最終結果の集計 ---
+            roi = (total_return / total_investment * 100) if total_investment > 0 else 0
+            summary = (f"バックテスト期間: {start_dt.strftime('%Y/%m/%d')} - {end_dt.strftime('%Y/%m/%d')}\n"
+                       + "-"*34 + f"\n"
+                       f"対象レース数: {len(target_race_ids)} R\n"
+                       f"投資レース数: {races_bet_on} R\n"
+                       f"総投資額: {total_investment:,.0f} 円\n"
+                       f"総回収額: {total_return:,.0f} 円\n"
+                       f"収支: {total_return - total_investment:,.0f} 円\n"
+                       f"回収率 (ROI): {roi:.2f} %\n"
+                       + "-"*34 + "\n"
+                       "【馬券種別成績】\n")
+            
+            all_bet_types = sorted(list(set(list(bet_counts.keys()) + list(hit_counts.keys()))))
+            for bet_type in all_bet_types:
+                count = bet_counts.get(bet_type, 0)
+                hit = hit_counts.get(bet_type, 0)
+                hit_rate = (hit / count * 100) if count > 0 else 0
+                summary += f"◆ {bet_type}:\n  - 的中率: {hit} / {count} ({hit_rate:.2f} %)\n"
 
+            # ログファイルの先頭にサマリーを追記
+            log_file.close()
+            with open(detailed_log_path, 'r+', encoding='utf-8-sig') as f:
+                content = f.read()
+                f.seek(0, 0)
+                f.write("="*50 + "\nバックテストサマリー\n" + "="*50 + "\n" + summary + "\n" + content)
+
+
+            # --- 5. GUIに結果を反映 ---
             self.root.after(0, self._update_summary_text, summary)
             self.root.after(0, self._draw_result_graph, simulation_results, analysis_type, f"収支推移 ({start_dt.strftime('%Y/%m/%d')}～)")
             self.root.after(0, lambda: self.update_status("バックテストが完了しました。"))
             self.root.after(0, lambda path=detailed_log_path: messagebox.showinfo("バックテスト完了", f"バックテストが完了しました。\n詳細は以下のログファイルを確認してください:\n{path}"))
+
         except Exception as e:
             traceback.print_exc()
             self.root.after(0, lambda err=e: messagebox.showerror("バックテストエラー", f"バックテスト処理中にエラーが発生しました:\n{err}"))
+            self.root.after(0, lambda: self.update_status("エラー: バックテスト失敗"))
+    
+    def get_bets_from_recommendation(self, horses_info):
+        """【改訂版】レースパターンに応じて「複勝・ワイド」「フォーメーション」の買い目リストを返す"""
+        from itertools import permutations, combinations
+        
+        bets = []
+        valid_horses = [h for h in horses_info if pd.notna(h.get('win_proba'))]
+        if len(valid_horses) < 5: return []
+
+        sorted_by_win_proba = sorted(valid_horses, key=lambda x: x.get('win_proba', 0), reverse=True)
+        
+        win_proba_top1 = sorted_by_win_proba[0].get('win_proba', 0)
+        win_proba_top2 = sorted_by_win_proba[1].get('win_proba', 0)
+        win_proba_top3 = sorted_by_win_proba[2].get('win_proba', 0)
+
+        race_pattern = "標準"
+        if win_proba_top1 > 0.35 and (win_proba_top1 > win_proba_top2 * 1.8):
+            race_pattern = "絶対軸馬"
+        elif win_proba_top1 < 0.25 and (win_proba_top1 - win_proba_top3) < 0.08:
+            race_pattern = "混戦"
+        
+        if race_pattern == "混戦":
+            top3_horses = sorted_by_win_proba[:3]
+            if len(top3_horses) == 3:
+                top3_numbers = [int(h['Umaban']) for h in top3_horses]
+                # 複勝: 予測1位の馬
+                bets.append({'type': '複勝', 'numbers': (top3_numbers[0],)})
+                # ワイド: 上位3頭ボックス
+                for comb in combinations(top3_numbers, 2):
+                    bets.append({'type': 'ワイド', 'numbers': tuple(sorted(comb))})
+        else:  # 絶対軸馬 or 標準
+            axis_horse = sorted_by_win_proba[0]
+            sorted_by_place_proba = sorted(valid_horses, key=lambda x: x.get('place_proba', 0), reverse=True)
+            opponents = [h for h in sorted_by_place_proba if h.get('Umaban') != axis_horse.get('Umaban')][:4]
+            
+            if len(opponents) >= 2:
+                axis_num = int(axis_horse['Umaban'])
+                opponent_nums = [int(h['Umaban']) for h in opponents]
+                
+                # 3連単フォーメーション: 軸1頭 -> 相手4頭 -> 相手3頭 (12点)
+                for i in range(len(opponent_nums)):
+                    for j in range(len(opponent_nums)):
+                        if i == j: continue
+                        second_horse = opponent_nums[i]
+                        third_horse = opponent_nums[j]
+                        bets.append({'type': '三連単', 'numbers': (axis_num, second_horse, third_horse)})
+        return bets
+    
+    def check_bet_hit(self, bet, payout_info):
+        """【改訂版】複勝とワイドの的中判定を追加"""
+        import re
+        bet_type = bet['type']
+        bet_numbers = bet['numbers']
+        
+        payout_type_jp = bet_type.replace('三連複', '3連複').replace('三連単', '3連単')
+        
+        if payout_type_jp in payout_info and '馬番' in payout_info[payout_type_jp] and '払戻金' in payout_info[payout_type_jp]:
+            winning_combinations = payout_info[payout_type_jp].get('馬番', [])
+            payouts = payout_info[payout_type_jp].get('払戻金', [])
+
+            for idx, win_comb_str in enumerate(winning_combinations):
+                try:
+                    payout_val = payouts[idx]
+                    if payout_val is None: continue
+
+                    win_nums_str = re.findall(r'\d+', str(win_comb_str))
+                    if not win_nums_str: continue
+                    
+                    # --- 的中判定ロジック ---
+                    if bet_type == '複勝':
+                        # 買った馬番が、的中馬番のどれか一つと一致すればOK
+                        if bet_numbers[0] in [int(n) for n in win_nums_str]:
+                            return int(payout_val), True
+                    
+                    elif bet_type == 'ワイド':
+                        # 買った馬番のペアが、的中馬番のペアのいずれかと一致すればOK
+                        win_nums_int = {int(n) for n in win_nums_str}
+                        if set(bet_numbers).issubset(win_nums_int):
+                             return int(payout_val), True
+                             
+                    else: # 3連複・3連単
+                        win_nums = tuple(int(n) for n in win_nums_str)
+                        if bet_type == '三連複':
+                            win_nums = tuple(sorted(win_nums))
+                        
+                        if bet_numbers == win_nums:
+                            return int(payout_val), True
+                
+                except (ValueError, IndexError):
+                    continue
+        
+        # 複勝・ワイドは複数の的中がありうるので、ループを最後まで回してから失敗を返す
+        if bet_type in ['複勝', 'ワイド']:
+            return 0, False # ループ内で的中しなかった場合
+        
+        return 0, False
 
     # --- バックテスト結果表示用ヘルパーメソッド (新規追加) ---
     def _update_summary_text(self, summary_content):
