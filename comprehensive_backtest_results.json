@@ -1,0 +1,142 @@
+{
+  "total": {
+    "total": 19222,
+    "umaren_hit": 5220,
+    "umaren_return": 13734060,
+    "umaren_cost": 5766600,
+    "umatan_hit": 5220,
+    "umatan_return": 27643930,
+    "umatan_cost": 11533200,
+    "wide_hit": 0,
+    "wide_return": 0,
+    "wide_cost": 5766600,
+    "sanrenpuku_hit": 2478,
+    "sanrenpuku_return": 34495610,
+    "sanrenpuku_cost": 1922200,
+    "sanrentan_hit": 2478,
+    "sanrentan_return": 225368560,
+    "sanrentan_cost": 11533200
+  },
+  "by_year": {
+    "2020年": {
+      "3box": {
+        "total": 3400,
+        "umaren_hit": 992,
+        "umaren_return": 2998120,
+        "umaren_cost": 1020000,
+        "umatan_hit": 992,
+        "umatan_return": 6195420,
+        "umatan_cost": 2040000,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 1020000,
+        "sanrenpuku_hit": 559,
+        "sanrenpuku_return": 8843040,
+        "sanrenpuku_cost": 340000,
+        "sanrentan_hit": 559,
+        "sanrentan_return": 55923300,
+        "sanrentan_cost": 2040000
+      }
+    },
+    "2021年": {
+      "3box": {
+        "total": 3393,
+        "umaren_hit": 881,
+        "umaren_return": 2500190,
+        "umaren_cost": 1017900,
+        "umatan_hit": 881,
+        "umatan_return": 5091460,
+        "umatan_cost": 2035800,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 1017900,
+        "sanrenpuku_hit": 407,
+        "sanrenpuku_return": 7229030,
+        "sanrenpuku_cost": 339300,
+        "sanrentan_hit": 407,
+        "sanrentan_return": 47173230,
+        "sanrentan_cost": 2035800
+      }
+    },
+    "2022年": {
+      "3box": {
+        "total": 3378,
+        "umaren_hit": 921,
+        "umaren_return": 2143100,
+        "umaren_cost": 1013400,
+        "umatan_hit": 921,
+        "umatan_return": 4508190,
+        "umatan_cost": 2026800,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 1013400,
+        "sanrenpuku_hit": 408,
+        "sanrenpuku_return": 5694590,
+        "sanrenpuku_cost": 337800,
+        "sanrentan_hit": 408,
+        "sanrentan_return": 38007380,
+        "sanrentan_cost": 2026800
+      }
+    },
+    "2023年": {
+      "3box": {
+        "total": 3384,
+        "umaren_hit": 934,
+        "umaren_return": 2393360,
+        "umaren_cost": 1015200,
+        "umatan_hit": 934,
+        "umatan_return": 4596150,
+        "umatan_cost": 2030400,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 1015200,
+        "sanrenpuku_hit": 441,
+        "sanrenpuku_return": 5127930,
+        "sanrenpuku_cost": 338400,
+        "sanrentan_hit": 441,
+        "sanrentan_return": 32930470,
+        "sanrentan_cost": 2030400
+      }
+    },
+    "2024年": {
+      "3box": {
+        "total": 3358,
+        "umaren_hit": 919,
+        "umaren_return": 2419190,
+        "umaren_cost": 1007400,
+        "umatan_hit": 919,
+        "umatan_return": 4884930,
+        "umatan_cost": 2014800,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 1007400,
+        "sanrenpuku_hit": 424,
+        "sanrenpuku_return": 5965240,
+        "sanrenpuku_cost": 335800,
+        "sanrentan_hit": 424,
+        "sanrentan_return": 39264670,
+        "sanrentan_cost": 2014800
+      }
+    },
+    "2025年(1-8月)": {
+      "3box": {
+        "total": 2309,
+        "umaren_hit": 573,
+        "umaren_return": 1280100,
+        "umaren_cost": 692700,
+        "umatan_hit": 573,
+        "umatan_return": 2367780,
+        "umatan_cost": 1385400,
+        "wide_hit": 0,
+        "wide_return": 0,
+        "wide_cost": 692700,
+        "sanrenpuku_hit": 239,
+        "sanrenpuku_return": 1635780,
+        "sanrenpuku_cost": 230900,
+        "sanrentan_hit": 239,
+        "sanrentan_return": 12069510,
+        "sanrentan_cost": 1385400
+      }
+    }
+  }
+}

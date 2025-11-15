@@ -1,0 +1,2321 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>競馬予測システム - バックテストレポート</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .summary-card h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        .summary-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+        .race-card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .race-header {
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .hit {
+            background: #d4edda;
+            color: #155724;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .miss {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .prediction {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .horse {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>競馬予測システム - バックテストレポート</h1>
+        <p>生成日時: 2025年11月11日 07:50:15</p>
+        <p>対象期間: 2025年6月1日 ～ 2025年8月31日</p>
+        <p>サンプルレース数: 30レース</p>
+    </div>
+
+    <div class="summary">
+        <div class="summary-card">
+            <h3>馬連（3頭BOX）</h3>
+            <div class="value">7/30</div>
+            <p>的中率: 23.3%</p>
+        </div>
+        <div class="summary-card">
+            <h3>3連複（3頭BOX）</h3>
+            <div class="value">2/30</div>
+            <p>的中率: 6.7%</p>
+        </div>
+        <div class="summary-card">
+            <h3>馬連回収率</h3>
+            <div class="value">30.3%</div>
+            <p>投資: 9,000円 → 払戻: 2,730円</p>
+        </div>
+        <div class="summary-card">
+            <h3>3連複回収率</h3>
+            <div class="value">45.3%</div>
+            <p>投資: 3,000円 → 払戻: 1,360円</p>
+        </div>
+    </div>
+
+    <h2>レース詳細</h2>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#1: 2025-06-01 東京1 - 3歳未勝利</h3>
+            <p>距離: 1600m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [6, 1, 16]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>6番</td>
+                <td>スカイビート</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>1番</td>
+                <td>センジュコスモス</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>16番</td>
+                <td>アイスリーディング</td>
+                <td>59.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>3番</td>
+                <td>イザベルソレイユ</td>
+                <td>55.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>9番</td>
+                <td>スパークルノヴァ</td>
+                <td>50.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 6番 スカイビート</div><div class='horse'>2着: 10番 エウテルペ</div><div class='horse'>3着: 3番 イザベルソレイユ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#2: 2025-06-01 東京1 - 3歳未勝利</h3>
+            <p>距離: 1400m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [12, 15, 2]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (360円)
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>12番</td>
+                <td>キョウエイスレーヴ</td>
+                <td>80.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>15番</td>
+                <td>カフェブーケット</td>
+                <td>72.5</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>2番</td>
+                <td>サウンドリアン</td>
+                <td>68.3</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>7番</td>
+                <td>サンマルストロング</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>4番</td>
+                <td>アシャカルーク</td>
+                <td>55.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 12番 キョウエイスレーヴ</div><div class='horse'>2着: 15番 カフェブーケット</div><div class='horse'>3着: 4番 アシャカルーク</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#3: 2025-06-01 東京1 - 3歳未勝利</h3>
+            <p>距離: 1600m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [15, 2, 3]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (230円)
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>15番</td>
+                <td>サトミノエンジェル</td>
+                <td>100.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>2番</td>
+                <td>セブンメデュラス</td>
+                <td>90.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>3番</td>
+                <td>デルマサターン</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>9番</td>
+                <td>ブランディストック</td>
+                <td>62.5</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>13番</td>
+                <td>マルターズヴェロス</td>
+                <td>61.7</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 2番 セブンメデュラス</div><div class='horse'>2着: 15番 サトミノエンジェル</div><div class='horse'>3着: 12番 デュピュイドローム</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#4: 2025-06-01 東京1 - 3歳未勝利</h3>
+            <p>距離: 1600m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [10, 14, 7]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>10番</td>
+                <td>ソナタン</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>14番</td>
+                <td>ノーブルライナー</td>
+                <td>90.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>7番</td>
+                <td>アルガムベイ</td>
+                <td>80.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>1番</td>
+                <td>テンフレッシュ</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>13番</td>
+                <td>ムコリッタ</td>
+                <td>65.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 4番 ダノンエンブレム</div><div class='horse'>2着: 1番 テンフレッシュ</div><div class='horse'>3着: 14番 ノーブルライナー</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#5: 2025-06-01 東京1 - 3歳1勝クラス</h3>
+            <p>距離: 1400m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [7, 9, 1]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>7番</td>
+                <td>メルシージュテーム</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>9番</td>
+                <td>ドラゴン</td>
+                <td>80.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>1番</td>
+                <td>パシーヴ</td>
+                <td>73.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>6番</td>
+                <td>ジーティーエンジン</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>5番</td>
+                <td>セレジェイラ</td>
+                <td>62.5</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 8番 トリリオンボーイ</div><div class='horse'>2着: 3番 レーティッシュ</div><div class='horse'>3着: 10番 ドントゥザムーン</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#6: 2025-06-01 東京1 - 4歳以上1勝クラス</h3>
+            <p>距離: 1800m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [14, 3, 1]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>14番</td>
+                <td>ニシノティアモ</td>
+                <td>74.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>3番</td>
+                <td>パストラーレ</td>
+                <td>73.8</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>1番</td>
+                <td>ツインクルステージ</td>
+                <td>68.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>8番</td>
+                <td>アドミラルシップ</td>
+                <td>67.5</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>2番</td>
+                <td>アンドローゼス</td>
+                <td>66.7</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 14番 ニシノティアモ</div><div class='horse'>2着: 8番 アドミラルシップ</div><div class='horse'>3着: 2番 アンドローゼス</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#7: 2025-06-01 東京1 - 4歳以上1勝クラス</h3>
+            <p>距離: 1400m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [8, 5, 13]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (500円)
+            </div>
+            <div>
+                3連複: <span class="hit">
+                    的中
+                </span>
+                (1,000円)
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>8番</td>
+                <td>ノルドヴェスト</td>
+                <td>73.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>5番</td>
+                <td>ヘレンキムゼー</td>
+                <td>67.5</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>13番</td>
+                <td>キミハスコール</td>
+                <td>62.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>12番</td>
+                <td>ブエナディオサ</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>15番</td>
+                <td>ノーブルミステリー</td>
+                <td>60.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 8番 ノルドヴェスト</div><div class='horse'>2着: 5番 ヘレンキムゼー</div><div class='horse'>3着: 13番 キミハスコール</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#8: 2025-06-01 東京1 - 青嵐賞(2勝)</h3>
+            <p>距離: 2400m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [16, 8, 15]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>16番</td>
+                <td>デュアルウィルダー</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>8番</td>
+                <td>クルミナーレ</td>
+                <td>101.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>15番</td>
+                <td>イクリール</td>
+                <td>97.5</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>11番</td>
+                <td>アバンデル</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>12番</td>
+                <td>ダノンホイットニー</td>
+                <td>85.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 16番 デュアルウィルダー</div><div class='horse'>2着: 5番 ジオセントリック</div><div class='horse'>3着: 1番 プリズマジコ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#9: 2025-06-01 東京1 - 薫風ステークス(3勝)</h3>
+            <p>距離: 1600m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [9, 5, 14]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>9番</td>
+                <td>ターコイズフリンジ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>5番</td>
+                <td>ラタフォレスト</td>
+                <td>102.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>14番</td>
+                <td>ワンパット</td>
+                <td>75.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>15番</td>
+                <td>ダノンザボルケーノ</td>
+                <td>72.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>7番</td>
+                <td>サイモンブーケ</td>
+                <td>72.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 15番 ダノンザボルケーノ</div><div class='horse'>2着: 11番 テリフィックプラン</div><div class='horse'>3着: 8番 リバートゥルー</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#10: 2025-06-01 東京1 - むらさき賞(3勝)</h3>
+            <p>距離: 1800m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [12, 18, 6]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>12番</td>
+                <td>ショウナンラピダス</td>
+                <td>92.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>18番</td>
+                <td>ブラックシールド</td>
+                <td>72.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>6番</td>
+                <td>マイネルニコラス</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>15番</td>
+                <td>バロネッサ</td>
+                <td>64.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>14番</td>
+                <td>アンリーロード</td>
+                <td>64.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 7番 メリオーレム</div><div class='horse'>2着: 12番 ショウナンラピダス</div><div class='horse'>3着: 2番 ニシノライコウ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#11: 2025-06-01 東京1 - 第92回東京優駿(GI)</h3>
+            <p>距離: 2400m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [8, 2, 16]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>8番</td>
+                <td>エムズ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>2番</td>
+                <td>ショウヘイ</td>
+                <td>100.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>16番</td>
+                <td>ファイアンクランツ</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>13番</td>
+                <td>クロワデュノール</td>
+                <td>90.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>10番</td>
+                <td>トッピボーン</td>
+                <td>90.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 13番 クロワデュノール</div><div class='horse'>2着: 17番 マスカレードボール</div><div class='horse'>3着: 2番 ショウヘイ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#12: 2025-06-01 東京1 - 第139回目黒記念(GII)</h3>
+            <p>距離: 2500m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [10, 1, 8]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>10番</td>
+                <td>アドマイヤテラ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>1番</td>
+                <td>サンライズソレイユ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>8番</td>
+                <td>スティンガーグラス</td>
+                <td>90.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>4番</td>
+                <td>マイネルクリソーラ</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>3番</td>
+                <td>ヴェルミセル</td>
+                <td>68.8</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 10番 アドマイヤテラ</div><div class='horse'>2着: 9番 ホーエリート</div><div class='horse'>3着: 4番 マイネルクリソーラ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#13: 2025-06-01 京都1 - 3歳未勝利</h3>
+            <p>距離: 1200m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [6, 13, 1]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>6番</td>
+                <td>ミトノキャット</td>
+                <td>78.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>13番</td>
+                <td>ペンテリコン</td>
+                <td>77.5</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>1番</td>
+                <td>メイショウホダワラ</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>16番</td>
+                <td>メイショウアキカゼ</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>7番</td>
+                <td>ヴィヴァシャス</td>
+                <td>63.3</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 13番 ペンテリコン</div><div class='horse'>2着: 12番 フラッシュケリー</div><div class='horse'>3着: 1番 メイショウホダワラ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#14: 2025-06-01 京都1 - 3歳未勝利</h3>
+            <p>距離: 1900m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [7, 9, 11]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>7番</td>
+                <td>ピエナアイル</td>
+                <td>78.3</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>9番</td>
+                <td>カンタカナリート</td>
+                <td>68.3</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>11番</td>
+                <td>サルファー</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>12番</td>
+                <td>オリジナルファイン</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>10番</td>
+                <td>ペプチドモガミ</td>
+                <td>65.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 14番 マテンロウシルビア</div><div class='horse'>2着: 11番 サルファー</div><div class='horse'>3着: 3番 サルタール</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#15: 2025-06-01 京都1 - 3歳未勝利</h3>
+            <p>距離: 1600m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [13, 18, 9]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>13番</td>
+                <td>ドバイミッション</td>
+                <td>66.2</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>18番</td>
+                <td>ダノンプリマ</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>9番</td>
+                <td>スピードイエロー</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>3番</td>
+                <td>ブラックソンソルト</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>15番</td>
+                <td>ヴァイスクレー</td>
+                <td>62.5</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 14番 コリカンチャ</div><div class='horse'>2着: 10番 セレスチャルホープ</div><div class='horse'>3着: 18番 ダノンプリマ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#16: 2025-06-01 京都1 - 障害4歳以上オープン</h3>
+            <p>距離: 3170m 障</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [9, 11, 7]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (300円)
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>9番</td>
+                <td>ディナースタ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>11番</td>
+                <td>ナリノモンターニュ</td>
+                <td>101.2</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>7番</td>
+                <td>プラチナムレイアー</td>
+                <td>80.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>1番</td>
+                <td>コンテナワールド</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>5番</td>
+                <td>メイショウコホク</td>
+                <td>70.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 9番 ディナースタ</div><div class='horse'>2着: 11番 ナリノモンターニュ</div><div class='horse'>3着: 3番 ナイトスピアー</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#17: 2025-06-01 京都1 - 3歳未勝利</h3>
+            <p>距離: 2400m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [3, 10, 5]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (490円)
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>3番</td>
+                <td>ジョイボーイ</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>10番</td>
+                <td>プレデスティナーレ</td>
+                <td>71.7</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>5番</td>
+                <td>ヤマニンヒストリア</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>11番</td>
+                <td>ジーティートシオー</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>4番</td>
+                <td>ジャックオダモ</td>
+                <td>68.3</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 3番 ジョイボーイ</div><div class='horse'>2着: 5番 ヤマニンヒストリア</div><div class='horse'>3着: 7番 コパカバーナ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#18: 2025-06-01 京都1 - 3歳1勝クラス</h3>
+            <p>距離: 1400m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [10, 6, 4]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>10番</td>
+                <td>ホウショウマリス</td>
+                <td>103.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>6番</td>
+                <td>ソリスクラヴィス</td>
+                <td>85.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>4番</td>
+                <td>サヨノジャンボリー</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>9番</td>
+                <td>オリージネアリア</td>
+                <td>68.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>12番</td>
+                <td>サンライズブレイク</td>
+                <td>67.5</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 6番 ソリスクラヴィス</div><div class='horse'>2着: 13番 ヴリトラハン</div><div class='horse'>3着: 14番 ジェミート</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#19: 2025-06-01 京都1 - 4歳以上1勝クラス</h3>
+            <p>距離: 2000m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [11, 7, 4]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (650円)
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>11番</td>
+                <td>ヴィスマール</td>
+                <td>84.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>7番</td>
+                <td>サスケ</td>
+                <td>77.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>4番</td>
+                <td>ゼンノインヴォーク</td>
+                <td>75.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>12番</td>
+                <td>シルバーカレッジ</td>
+                <td>72.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>10番</td>
+                <td>アップステート</td>
+                <td>66.7</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 11番 ヴィスマール</div><div class='horse'>2着: 4番 ゼンノインヴォーク</div><div class='horse'>3着: 12番 シルバーカレッジ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#20: 2025-06-01 京都1 - 4歳以上2勝クラス</h3>
+            <p>距離: 1200m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [10, 16, 8]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>10番</td>
+                <td>ニホンピロトッティ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>16番</td>
+                <td>フォルテローザ</td>
+                <td>88.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>8番</td>
+                <td>ジョヴィアン</td>
+                <td>71.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>1番</td>
+                <td>フレイミングパイ</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>15番</td>
+                <td>カンザシ</td>
+                <td>70.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 13番 パドマ</div><div class='horse'>2着: 16番 フォルテローザ</div><div class='horse'>3着: 10番 ニホンピロトッティ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#21: 2025-06-01 京都1 - 與杼特別(2勝)</h3>
+            <p>距離: 1800m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [3, 11, 12]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>3番</td>
+                <td>メイショウソウタ</td>
+                <td>99.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>11番</td>
+                <td>ホルトバージ</td>
+                <td>93.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>12番</td>
+                <td>ダディーズトリップ</td>
+                <td>79.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>4番</td>
+                <td>ギマール</td>
+                <td>72.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>2番</td>
+                <td>ノボリクレバー</td>
+                <td>70.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 3番 メイショウソウタ</div><div class='horse'>2着: 2番 ノボリクレバー</div><div class='horse'>3着: 10番 プルナチャンドラ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#22: 2025-06-01 京都1 - 安土城ステークス(L)</h3>
+            <p>距離: 1400m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [11, 16, 15]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>11番</td>
+                <td>バウンシーステップ</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>16番</td>
+                <td>アスクワンタイム</td>
+                <td>63.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>15番</td>
+                <td>スカイロケット</td>
+                <td>61.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>8番</td>
+                <td>グレイイングリーン</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>1番</td>
+                <td>アナゴサン</td>
+                <td>58.8</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 14番 ラケマーダ</div><div class='horse'>2着: 8番 グレイイングリーン</div><div class='horse'>3着: 16番 アスクワンタイム</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#23: 2025-06-01 京都1 - 白百合ステークス(L)</h3>
+            <p>距離: 1800m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [5, 8, 10]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>5番</td>
+                <td>マイユニバース</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>8番</td>
+                <td>ライトトラック</td>
+                <td>95.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>10番</td>
+                <td>ニュークレド</td>
+                <td>84.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>11番</td>
+                <td>バズアップビート</td>
+                <td>83.8</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>2番</td>
+                <td>スナークピカソ</td>
+                <td>77.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 8番 ライトトラック</div><div class='horse'>2着: 7番 センツブラッド</div><div class='horse'>3着: 11番 バズアップビート</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#24: 2025-06-01 京都1 - 渡月橋ステークス(3勝)</h3>
+            <p>距離: 1400m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [6, 2, 5]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>6番</td>
+                <td>バンドシェル</td>
+                <td>82.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>2番</td>
+                <td>ユハンヌス</td>
+                <td>76.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>5番</td>
+                <td>ムーンリットナイト</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>1番</td>
+                <td>トーホウディアス</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>3番</td>
+                <td>スーサンアッシャー</td>
+                <td>65.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 8番 ガロンヌ</div><div class='horse'>2着: 14番 サクセスアイ</div><div class='horse'>3着: 5番 ムーンリットナイト</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#25: 2025-06-07 東京 - 障害3歳以上未勝利</h3>
+            <p>距離: 3000m 障</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [3, 1, 9]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>3番</td>
+                <td>ネイチャーシップ</td>
+                <td>75.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>1番</td>
+                <td>スペクトログラム</td>
+                <td>73.8</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>9番</td>
+                <td>アルマドラード</td>
+                <td>72.5</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>2番</td>
+                <td>タイセイジャスパー</td>
+                <td>65.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>5番</td>
+                <td>ウィズユアドリーム</td>
+                <td>62.5</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 14番 ジオフロント</div><div class='horse'>2着: 8番 プラチナトレジャー</div><div class='horse'>3着: 6番 コンクエスト</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#26: 2025-06-07 東京 - 3歳未勝利</h3>
+            <p>距離: 1400m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [16, 8, 9]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>16番</td>
+                <td>ブルージュ</td>
+                <td>71.7</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>8番</td>
+                <td>デルマエアロール</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>9番</td>
+                <td>コオリナラグーン</td>
+                <td>68.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>6番</td>
+                <td>ステラマテュティナ</td>
+                <td>61.7</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>13番</td>
+                <td>ウインレアリゼ</td>
+                <td>58.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 16番 ブルージュ</div><div class='horse'>2着: 13番 ウインレアリゼ</div><div class='horse'>3着: 2番 アドリアフレイバー</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#27: 2025-06-07 東京 - 3歳未勝利</h3>
+            <p>距離: 1600m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [16, 14, 15]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>16番</td>
+                <td>ベネスピラ</td>
+                <td>71.7</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>14番</td>
+                <td>ナイトダンサー</td>
+                <td>62.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>15番</td>
+                <td>アオイハナミチ</td>
+                <td>59.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>11番</td>
+                <td>コーシューパンジャ</td>
+                <td>56.7</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>4番</td>
+                <td>ルシャルムール</td>
+                <td>55.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 5番 ファリーザ</div><div class='horse'>2着: 11番 コーシューパンジャ</div><div class='horse'>3着: 16番 ベネスピラ</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#28: 2025-06-07 東京 - 3歳未勝利</h3>
+            <p>距離: 2000m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [13, 9, 4]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>13番</td>
+                <td>エポナ</td>
+                <td>105.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>9番</td>
+                <td>ランスオブフェイス</td>
+                <td>62.5</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>4番</td>
+                <td>ホウオウヌーヴォー</td>
+                <td>61.7</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>10番</td>
+                <td>ストレートブラック</td>
+                <td>60.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>2番</td>
+                <td>ラッキーロジータ</td>
+                <td>60.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 13番 エポナ</div><div class='horse'>2着: 7番 バッキンガムパレス</div><div class='horse'>3着: 10番 ストレートブラック</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#29: 2025-06-07 東京 - 2歳新馬</h3>
+            <p>距離: 1600m 芝</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [7, 2, 4]</div>
+            <div>
+                馬連: <span class="hit">
+                    的中
+                </span>
+                (200円)
+            </div>
+            <div>
+                3連複: <span class="hit">
+                    的中
+                </span>
+                (360円)
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>7番</td>
+                <td>ディバインウインド</td>
+                <td>30.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>2番</td>
+                <td>ゾロアストロ</td>
+                <td>30.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>4番</td>
+                <td>ベルバード</td>
+                <td>30.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>9番</td>
+                <td>ステラスペース</td>
+                <td>30.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>6番</td>
+                <td>マイネルマスター</td>
+                <td>30.0</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 7番 ディバインウインド</div><div class='horse'>2着: 2番 ゾロアストロ</div><div class='horse'>3着: 4番 ベルバード</div>
+        </div>
+    </div>
+
+    <div class="race-card">
+        <div class="race-header">
+            <h3>#30: 2025-06-07 東京 - 3歳未勝利</h3>
+            <p>距離: 1300m ダ</p>
+        </div>
+
+        <div class="prediction">
+            <div><strong>予測TOP3:</strong> [5, 15, 13]</div>
+            <div>
+                馬連: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+            <div>
+                3連複: <span class="miss">
+                    不的中
+                </span>
+                
+            </div>
+        </div>
+
+        <table>
+            <tr>
+                <th>順位</th>
+                <th>馬番</th>
+                <th>馬名</th>
+                <th>AIスコア</th>
+            </tr>
+
+            <tr>
+                <td>◎ 1位</td>
+                <td>5番</td>
+                <td>シルフレイ</td>
+                <td>88.0</td>
+            </tr>
+
+            <tr>
+                <td>○ 2位</td>
+                <td>15番</td>
+                <td>ナムラペルル</td>
+                <td>80.0</td>
+            </tr>
+
+            <tr>
+                <td>▲ 3位</td>
+                <td>13番</td>
+                <td>ジョイナーテソーロ</td>
+                <td>76.0</td>
+            </tr>
+
+            <tr>
+                <td>△ 4位</td>
+                <td>8番</td>
+                <td>パーティーガール</td>
+                <td>70.0</td>
+            </tr>
+
+            <tr>
+                <td>☆ 5位</td>
+                <td>14番</td>
+                <td>シルバードン</td>
+                <td>62.5</td>
+            </tr>
+
+        </table>
+
+        <div><strong>実際の結果:</strong></div>
+        <div class="prediction">
+<div class='horse'>1着: 15番 ナムラペルル</div><div class='horse'>2着: 4番 アイドル</div><div class='horse'>3着: 5番 シルフレイ</div>
+        </div>
+    </div>
+
+</body>
+</html>

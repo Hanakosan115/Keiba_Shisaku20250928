@@ -130,7 +130,7 @@ class HorseRacingAnalyzerApp:
 
         # タブの追加
         self.tab_control.add(self.tab_home, text="ホーム")
-        self.tab_control.add(self.tab_data, text="データ管理")
+        self.tab_control.add(self.tab_data, text="データ取得")
         self.tab_control.add(self.tab_analysis, text="データ分析")
         self.tab_control.add(self.tab_prediction, text="予測")
         self.tab_control.add(self.tab_results, text="結果検証") # より目的に合った名前に変更
@@ -2956,10 +2956,10 @@ class HorseRacingAnalyzerApp:
         button_frame = ttk.Frame(self.tab_home)
         button_frame.pack(fill=tk.X, padx=20, pady=20)
 
-        start_button = ttk.Button(button_frame, text="データ管理を開始", command=lambda: self.tab_control.select(1))
+        start_button = ttk.Button(button_frame, text="データ取得を開始", command=lambda: self.tab_control.select(1))
         start_button.pack(side=tk.LEFT, padx=10)
 
-        analysis_button = ttk.Button(button_frame, text="分析を開始", command=lambda: self.tab_control.select(2))
+        analysis_button = ttk.Button(button_frame, text="データ分析を開始", command=lambda: self.tab_control.select(2))
         analysis_button.pack(side=tk.LEFT, padx=10)
 
         prediction_button = ttk.Button(button_frame, text="予測を開始", command=lambda: self.tab_control.select(3))
@@ -3014,36 +3014,76 @@ class HorseRacingAnalyzerApp:
         to_month_combo = ttk.Combobox(self.period_frame, textvariable=self.to_month_var, width=3, state="readonly", values=months)
         to_month_combo.grid(row=0, column=5, padx=2)
 
+        # データ取得モード選択
+        mode_label = ttk.Label(left_frame, text="取得モード:")
+        mode_label.grid(row=2, column=0, sticky=tk.W, padx=10, pady=(15, 5))
+
+        mode_frame = ttk.Frame(left_frame)
+        mode_frame.grid(row=2, column=1, sticky=tk.W, padx=10, pady=(15, 5))
+
+        self.fetch_mode_var = tk.StringVar(value="new")
+        new_radio = ttk.Radiobutton(mode_frame, text="新規作成", variable=self.fetch_mode_var, value="new")
+        new_radio.pack(side=tk.LEFT, padx=5)
+        append_radio = ttk.Radiobutton(mode_frame, text="既存に追加", variable=self.fetch_mode_var, value="append")
+        append_radio.pack(side=tk.LEFT, padx=5)
+
         # ローカルファイル選択
         self.file_label = ttk.Label(left_frame, text="レース結果 CSV:") # ラベルもクラス変数に
-        self.file_label.grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
+        self.file_label.grid(row=3, column=0, sticky=tk.W, padx=10, pady=5)
 
         self.file_frame = ttk.Frame(left_frame) # file_frameもクラス変数に
-        self.file_frame.grid(row=2, column=1, sticky=tk.EW, padx=10, pady=5)
+        self.file_frame.grid(row=3, column=1, sticky=tk.EW, padx=10, pady=5)
         left_frame.columnconfigure(1, weight=1) # 横幅に追従させる
 
         self.file_path_var = tk.StringVar()
         self.file_entry = ttk.Entry(self.file_frame, textvariable=self.file_path_var, width=30) # entryもクラス変数に
         self.file_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
 
+        self.auto_detect_button = ttk.Button(self.file_frame, text="自動検出", command=self.auto_detect_csv)
+        self.auto_detect_button.pack(side=tk.LEFT, padx=(0, 5))
+
         self.browse_button = ttk.Button(self.file_frame, text="参照", command=self.browse_file) # buttonもクラス変数に
         self.browse_button.pack(side=tk.LEFT)
 
         # データ取得/読み込みボタン
         fetch_button = ttk.Button(left_frame, text="データ取得 / 読み込み", command=self.start_data_fetching)
-        fetch_button.grid(row=3, column=0, columnspan=2, pady=20)
-        
-        train_button = ttk.Button(self.tab_data, text="モデル学習＆評価", command=self.start_model_training_process)
-        train_button.pack(side=tk.BOTTOM, pady=15) # side=tk.BOTTOM で下部に配置
-        
-        # --- 一時的なキャッシュ保存ボタン ---
-        save_cache_button = ttk.Button(self.tab_data, text="今のキャッシュを保存", command=self.save_cache_to_file)
-        save_cache_button.pack(pady=10) # または grid() などで配置
+        fetch_button.grid(row=4, column=0, columnspan=2, pady=20)
+
+        # プログレスバー
+        self.progress_frame = ttk.LabelFrame(left_frame, text="進捗状況")
+        self.progress_frame.grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=10)
+
+        self.progress_bar = ttk.Progressbar(
+            self.progress_frame,
+            orient="horizontal",
+            length=300,
+            mode="determinate"
+        )
+        self.progress_bar.pack(padx=10, pady=5)
+
+        self.progress_label = ttk.Label(self.progress_frame, text="待機中...")
+        self.progress_label.pack(padx=10, pady=5)
+
+        # --- キャッシュ保存ボタン ---
+        save_cache_button = ttk.Button(self.tab_data, text="キャッシュを保存", command=self.save_cache_to_file)
+        save_cache_button.pack(side=tk.BOTTOM, pady=15)
         # --- ここまで ---
 
         # 右側のフレーム（データプレビュー）
-        right_frame = ttk.LabelFrame(self.tab_data, text="データプレビュー") 
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10) 
+        right_frame = ttk.LabelFrame(self.tab_data, text="データプレビュー")
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # 現在のデータ情報表示
+        info_frame = ttk.LabelFrame(right_frame, text="現在のデータ状況")
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.data_info_label = ttk.Label(
+            info_frame,
+            text="データ未読み込み",
+            font=("Meiryo UI", 10),
+            justify=tk.LEFT
+        )
+        self.data_info_label.pack(padx=10, pady=10, anchor=tk.W)
 
         # データタイプ選択 (結合データも表示できるように変更)
         data_type_frame = ttk.Frame(right_frame)
@@ -3083,6 +3123,12 @@ class HorseRacingAnalyzerApp:
 
         # 初期状態でローカルファイルウィジェットを表示
         self.toggle_local_file_widgets()
+
+        # 起動時に最新のCSVファイルを自動検出
+        latest_csv = self.find_latest_csv_file()
+        if latest_csv:
+            self.file_path_var.set(latest_csv)
+            print(f"起動時に最新CSVを自動検出: {latest_csv}")
 
     def toggle_local_file_widgets(self, event=None):
         """データソースに応じてウィジェットの表示/非表示を切り替える"""
@@ -3175,6 +3221,24 @@ class HorseRacingAnalyzerApp:
     def run_netkeiba_collection(self, start_year, start_month, end_year, end_month):
         """netkeibaデータ収集をバックグラウンドで実行し、結果を格納・保存する"""
         try:
+            # 「既存に追加」モードの場合、既存ファイルを読み込む
+            if self.fetch_mode_var.get() == "append":
+                existing_csv = self.file_path_var.get()
+                if existing_csv and os.path.exists(existing_csv):
+                    print(f"既存データを読み込み中: {existing_csv}")
+                    self.root.after(0, lambda: self.update_status(f"既存データ読み込み中: {os.path.basename(existing_csv)}"))
+                    try:
+                        existing_df = pd.read_csv(existing_csv, encoding='utf-8', low_memory=False)
+                        self.combined_data = existing_df
+                        print(f"既存データ読み込み完了: {len(existing_df)}件")
+                        self.root.after(0, lambda: self.update_status(f"既存データ読み込み完了: {len(existing_df)}件"))
+                    except Exception as e:
+                        print(f"既存データ読み込みエラー: {e}")
+                        self.root.after(0, lambda err=e: messagebox.showwarning("読み込みエラー", f"既存ファイルの読み込みに失敗しました:\n{err}\n新規データのみ保存されます。"))
+                else:
+                    print("既存ファイルが指定されていないか、存在しません。新規作成モードで実行します。")
+                    self.root.after(0, lambda: self.update_status("既存ファイルなし - 新規作成モードで実行"))
+
             # ★ 移植したデータ収集メイン関数を呼び出す (selfを付ける)
             final_combined_df, final_payouts_list = self.collect_race_data_for_period(
                 start_year, start_month, end_year, end_month
@@ -3305,25 +3369,78 @@ class HorseRacingAnalyzerApp:
             self.root.after(0, lambda: self.update_status("ローカルデータ準備完了"))
             self.root.after(0, lambda: messagebox.showinfo("読み込み完了", "データの読み込みと準備が完了しました。"))
             self.root.after(0, self.update_data_preview)
+            self.root.after(0, self.update_data_info)
 
         except Exception as e:
             self.root.after(0, self.handle_collection_error, e)
-    
+
+    def smart_merge_data(self, existing_df, new_df):
+        """
+        スマートマージ：重複を避けてデータをマージ
+
+        Args:
+            existing_df: 既存データ
+            new_df: 新規データ
+
+        Returns:
+            merged_df: マージ後のデータ
+            num_new: 追加された新規レコード数
+        """
+        if existing_df is None or existing_df.empty:
+            return new_df.copy(), len(new_df)
+
+        if new_df is None or new_df.empty:
+            return existing_df.copy(), 0
+
+        # 重複チェック用のキーを作成（race_id + horse_id）
+        existing_df = existing_df.copy()
+        new_df = new_df.copy()
+
+        if 'race_id' in existing_df.columns and 'horse_id' in existing_df.columns:
+            existing_df['_merge_key'] = (
+                existing_df['race_id'].astype(str) + '_' +
+                existing_df['horse_id'].astype(str)
+            )
+            new_df['_merge_key'] = (
+                new_df['race_id'].astype(str) + '_' +
+                new_df['horse_id'].astype(str)
+            )
+
+            # 新規データのみ抽出
+            new_only = new_df[~new_df['_merge_key'].isin(existing_df['_merge_key'])].copy()
+
+            # マージ
+            merged_df = pd.concat([existing_df, new_only], ignore_index=True)
+
+            # クリーンアップ
+            merged_df.drop('_merge_key', axis=1, inplace=True, errors='ignore')
+            num_new = len(new_only)
+
+            print(f"スマートマージ: 既存{len(existing_df)}件 + 新規{num_new}件 = 合計{len(merged_df)}件")
+            return merged_df, num_new
+        else:
+            # race_idまたはhorse_idがない場合は単純結合
+            merged_df = pd.concat([existing_df, new_df], ignore_index=True)
+            return merged_df, len(new_df)
+
     def process_collection_results(self, df_new_combined, new_payout_data, start_year, start_month, end_year, end_month):
         """【最終修正版】データ収集完了後の処理。ファイル保存時の日付エラーを完全に回避する。"""
         
         # --- 既存データと新規収集データを結合 ---
         if self.combined_data is not None and not self.combined_data.empty:
             print("既存データに新規収集データを結合します...")
-            self.update_status("既存データと新規データを結合中...")
+            self.update_status("既存データと新規データをスマートマージ中...")
             try:
                 date_col = 'date' if 'date' in self.combined_data.columns else 'race_date'
                 self.combined_data[date_col] = pd.to_datetime(self.combined_data[date_col], errors='coerce')
                 df_new_combined[date_col] = pd.to_datetime(df_new_combined[date_col], errors='coerce')
 
-                updated_combined_data = pd.concat([self.combined_data, df_new_combined], ignore_index=True)
-                updated_combined_data.drop_duplicates(subset=['race_id', 'horse_id'], keep='last', inplace=True)
-                self.combined_data = updated_combined_data
+                # スマートマージを使用（重複除外）
+                merged_data, num_new = self.smart_merge_data(self.combined_data, df_new_combined)
+                self.combined_data = merged_data
+
+                print(f"データ結合完了。新規追加: {num_new}件、総件数: {len(self.combined_data)}件")
+                self.update_status(f"データ結合完了：新規{num_new}件追加")
             except Exception as e_concat:
                  print(f"!!! ERROR during data concatenation: {e_concat}")
                  self.root.after(0, lambda err=e_concat: messagebox.showerror("結合エラー", f"データの結合中にエラーが発生しました:\n{err}"))
@@ -3332,7 +3449,7 @@ class HorseRacingAnalyzerApp:
             existing_payout_race_ids = {str(p.get('race_id')) for p in self.payout_data if p.get('race_id')}
             new_payouts_to_add = [p for p in new_payout_data if str(p.get('race_id')) not in existing_payout_race_ids]
             self.payout_data.extend(new_payouts_to_add)
-            print(f"データ結合完了。現在の総レースデータ数: {self.combined_data.shape[0]}行")
+            print(f"配当データ追加: {len(new_payouts_to_add)}件")
 
         elif df_new_combined is not None and not df_new_combined.empty:
             self.combined_data = df_new_combined.copy()
@@ -3352,7 +3469,8 @@ class HorseRacingAnalyzerApp:
             self.root.after(0, lambda: self.update_status(f"データ処理完了: {self.combined_data.shape[0]}行"))
             self.root.after(0, lambda: messagebox.showinfo("データ処理完了", f"データの準備が完了しました。\nレースデータ: {self.combined_data.shape[0]}行\n(各種統計計算済)"))
             self.root.after(0, self.update_data_preview)
-            
+            self.root.after(0, self.update_data_info)
+
             # --- ▼▼▼ 自動ファイル保存処理 ▼▼▼ ---
             if start_year:
                 try:
@@ -3383,14 +3501,48 @@ class HorseRacingAnalyzerApp:
                          # 日付でないデータは空文字にする
                          df_to_save[date_col] = pd.to_datetime(df_to_save[date_col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                     
+                    # 保存前処理：古いファイルと同名ファイルを削除
+                    # 1. 「既存に追加」モードで古いファイル名と新しいファイル名が異なる場合、古いファイルを削除
+                    if self.fetch_mode_var.get() == "append":
+                        old_csv = self.file_path_var.get()
+                        if old_csv and os.path.exists(old_csv) and old_csv != results_filename:
+                            try:
+                                os.remove(old_csv)
+                                print(f"古いファイルを削除: {old_csv}")
+                                # 対応するJSONファイルも削除
+                                old_json = old_csv.replace('.csv', '.json').replace('_combined_', '_payouts_')
+                                if os.path.exists(old_json):
+                                    os.remove(old_json)
+                                    print(f"古いJSONファイルを削除: {old_json}")
+                            except Exception as e:
+                                print(f"古いファイル削除エラー（無視）: {e}")
+
+                    # 2. 保存先ファイルが既に存在する場合は削除（タイムスタンプ更新のため）
+                    if os.path.exists(results_filename):
+                        try:
+                            os.remove(results_filename)
+                            print(f"既存の保存先ファイルを削除: {results_filename}")
+                        except Exception as e:
+                            print(f"保存先ファイル削除エラー（無視）: {e}")
+                    if os.path.exists(payouts_filename):
+                        try:
+                            os.remove(payouts_filename)
+                            print(f"既存の保存先JSONファイルを削除: {payouts_filename}")
+                        except Exception as e:
+                            print(f"保存先JSONファイル削除エラー（無視）: {e}")
+
+                    # 3. 新規ファイルとして保存
                     df_to_save.to_csv(results_filename, index=False, encoding='utf-8-sig')
                     print(f"収集・結合したデータを '{results_filename}' に保存しました。")
-                    
+
+                    # file_path_varを新しいファイル名に更新
+                    self.file_path_var.set(results_filename)
+
                     if self.payout_data:
                         with open(payouts_filename, 'w', encoding='utf-8') as f:
                             json.dump(self.payout_data, f, indent=2, ensure_ascii=False)
                         print(f"払い戻しデータを '{payouts_filename}' に保存しました。")
-                    
+
                     self.root.after(0, lambda: messagebox.showinfo("データ保存完了", f"収集・結合したデータは以下に保存されました:\nCSV: {results_filename}\nJSON: {payouts_filename}"))
                     
                     # キャッシュの保存
@@ -3742,16 +3894,6 @@ class HorseRacingAnalyzerApp:
         data_dir_button.grid(row=row_idx, column=2, padx=10, pady=5)
         row_idx += 1
 
-        # モデルディレクトリ
-        models_dir_label = ttk.Label(dir_frame, text="学習モデル:")
-        models_dir_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
-        self.settings_models_dir_var = tk.StringVar()
-        models_dir_entry = ttk.Entry(dir_frame, textvariable=self.settings_models_dir_var, width=40)
-        models_dir_entry.grid(row=row_idx, column=1, sticky=tk.EW, padx=10, pady=5)
-        models_dir_button = ttk.Button(dir_frame, text="参照", command=lambda: self.browse_directory(self.settings_models_dir_var))
-        models_dir_button.grid(row=row_idx, column=2, padx=10, pady=5)
-        row_idx += 1
-
         # 結果ディレクトリ
         results_dir_label = ttk.Label(dir_frame, text="分析/予測結果:")
         results_dir_label.grid(row=row_idx, column=0, sticky=tk.W, padx=10, pady=5)
@@ -3797,6 +3939,60 @@ class HorseRacingAnalyzerApp:
             self.file_path_var.set(file_path)
             # ファイル選択時に自動で読み込みを開始する（オプション）
             # self.fetch_data()
+
+    def find_latest_csv_file(self):
+        """データディレクトリ内の最も広い期間範囲を持つCSVファイルを検索"""
+        data_dir = self.settings.get("data_dir", ".")
+        if not os.path.exists(data_dir):
+            return None
+
+        # CSVファイルのリストを取得
+        csv_files = [
+            os.path.join(data_dir, f)
+            for f in os.listdir(data_dir)
+            if f.endswith('.csv') and 'combined' in f.lower()
+        ]
+
+        if not csv_files:
+            return None
+
+        # ファイル名から期間範囲を抽出して最も広いものを選ぶ
+        def get_period_range(file_path):
+            """ファイル名から期間範囲（月数）を計算"""
+            import re
+            filename = os.path.basename(file_path)
+            # YYYYMM_YYYYMM パターンを探す
+            match = re.search(r'(\d{6})_(\d{6})', filename)
+            if match:
+                start_str = match.group(1)
+                end_str = match.group(2)
+                try:
+                    start_year = int(start_str[:4])
+                    start_month = int(start_str[4:6])
+                    end_year = int(end_str[:4])
+                    end_month = int(end_str[4:6])
+                    # 月数を計算
+                    months = (end_year - start_year) * 12 + (end_month - start_month) + 1
+                    return months
+                except:
+                    pass
+            # 期間が取得できない場合はファイルサイズで判断
+            return 0
+
+        # 最も広い期間範囲を持つファイルを選択
+        best_file = max(csv_files, key=lambda f: (get_period_range(f), os.path.getsize(f)))
+        return best_file
+
+    def auto_detect_csv(self):
+        """最新のCSVファイルを自動検出してエントリに設定"""
+        latest_file = self.find_latest_csv_file()
+        if latest_file:
+            self.file_path_var.set(latest_file)
+            self.update_status(f"最新CSVを検出: {os.path.basename(latest_file)}")
+            print(f"最新CSVファイル自動検出: {latest_file}")
+        else:
+            messagebox.showinfo("自動検出", "データディレクトリにCSVファイルが見つかりませんでした。")
+            self.update_status("CSV自動検出: ファイルなし")
 
     def browse_directory(self, var):
         """ディレクトリ選択ダイアログを表示"""
@@ -3931,6 +4127,36 @@ class HorseRacingAnalyzerApp:
         self.root.after(0, lambda: self.update_status(f"{source}からのデータ取得完了"))
         self.root.after(0, lambda: messagebox.showinfo("取得完了", f"{source}からのデータ取得が完了しました。（シミュレーション）"))
 
+
+    def update_data_info(self):
+        """現在のデータ情報を更新"""
+        if self.combined_data is None or self.combined_data.empty:
+            info_text = "データ未読み込み"
+        else:
+            df = self.combined_data
+
+            # データ範囲を取得
+            date_col = 'date' if 'date' in df.columns else 'race_date'
+            if date_col in df.columns:
+                dates = pd.to_datetime(df[date_col], errors='coerce')
+                min_date = dates.min()
+                max_date = dates.max()
+                date_range = f"{min_date.strftime('%Y/%m') if pd.notna(min_date) else '不明'} - {max_date.strftime('%Y/%m') if pd.notna(max_date) else '不明'}"
+            else:
+                date_range = "不明"
+
+            # レース数・馬数を取得
+            num_races = df['race_id'].nunique() if 'race_id' in df.columns else len(df)
+            num_horses = df['horse_id'].nunique() if 'horse_id' in df.columns else 0
+
+            info_text = (
+                f"データ範囲: {date_range}\n"
+                f"レース数: {num_races:,}   馬数: {num_horses:,}\n"
+                f"総行数: {len(df):,}"
+            )
+
+        if hasattr(self, 'data_info_label'):
+            self.data_info_label.config(text=info_text)
 
     def update_data_preview(self):
         """データプレビューテーブルの更新"""
@@ -5213,7 +5439,6 @@ class HorseRacingAnalyzerApp:
         self.settings_kelly_var.set(str(self.settings.get("kelly_fraction", "")))
         self.settings_max_bet_var.set(str(self.settings.get("max_bet_ratio", "")))
         self.settings_data_dir_var.set(self.settings.get("data_dir", ""))
-        self.settings_models_dir_var.set(self.settings.get("models_dir", ""))
         self.settings_results_dir_var.set(self.settings.get("results_dir", ""))
 
         # 予測タブの戦略表示も更新
@@ -5233,7 +5458,6 @@ class HorseRacingAnalyzerApp:
                 "kelly_fraction": float(self.settings_kelly_var.get()),
                 "max_bet_ratio": float(self.settings_max_bet_var.get()),
                 "data_dir": self.settings_data_dir_var.get(),
-                "models_dir": self.settings_models_dir_var.get(),
                 "results_dir": self.settings_results_dir_var.get()
             }
 
