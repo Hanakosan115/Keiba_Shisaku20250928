@@ -1679,7 +1679,10 @@ class KeibaGUIv3:
             df_pred = pd.DataFrame(predictions)
             df_pred = df_pred.sort_values('勝率予測', ascending=False)
 
-            # 結果を保存
+            # 印の割り当て（役割別）
+            df_pred = self._assign_marks(df_pred, has_odds)
+
+            # 結果を保存（印カラム含む）
             self.last_prediction = df_pred.copy()
             self.last_race_id = race_id
             self.last_race_info = race_info
@@ -1711,15 +1714,19 @@ class KeibaGUIv3:
             if race_info.get('start_time'):
                 info_text += f" 発走{race_info['start_time']}"
 
-            # 推奨馬券
-            top1 = df_pred.iloc[0]
-            info_text += f"\n\n◎本命: {top1['馬番']}番 {top1['馬名']} (勝率{top1['勝率予測']*100:.1f}%)"
-            if len(df_pred) > 1:
-                top2 = df_pred.iloc[1]
-                info_text += f"  ○対抗: {top2['馬番']}番 {top2['馬名']}"
-            if len(df_pred) > 2:
-                top3 = df_pred.iloc[2]
-                info_text += f"  ▲単穴: {top3['馬番']}番 {top3['馬名']}"
+            # 印割り当て結果から本命等を取得
+            mark_labels = {'◎': '本命', '○': '対抗', '▲': '単穴', '☆': '星'}
+            info_text += "\n\n"
+            mark_parts = []
+            for mark_char, label in mark_labels.items():
+                matched = df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
+                if len(matched) > 0:
+                    h = matched.iloc[0]
+                    part = f"{mark_char}{label}: {h['馬番']}番 {h['馬名']}"
+                    if mark_char == '◎':
+                        part += f" (勝率{h['勝率予測']*100:.1f}%)"
+                    mark_parts.append(part)
+            info_text += "  ".join(mark_parts)
 
             if not has_odds:
                 info_text += "\n⚠ オッズ未発表（期待値計算不可）"
@@ -1758,6 +1765,66 @@ class KeibaGUIv3:
             # 進行バーが中途半端な場合は0にリセット
             if self.progress['value'] < 100 and self.progress['value'] > 0:
                 self.progress['value'] = 0
+
+    def _assign_marks(self, df_pred, has_odds):
+        """役割別の印を割り当て、'印'カラムを追加して返す"""
+        marks = {}  # 馬番 → 印文字列
+
+        # 勝率予測順にソート済み前提
+        sorted_by_win = df_pred.sort_values('勝率予測', ascending=False)
+
+        # ◎: 勝率1位
+        honmei = sorted_by_win.iloc[0]
+        marks[honmei['馬番']] = '◎'
+
+        # ○: 勝率2位
+        if len(sorted_by_win) > 1:
+            taikou = sorted_by_win.iloc[1]
+            marks[taikou['馬番']] = '○'
+
+        assigned = set(marks.keys())
+
+        # ▲: 勝率予測3位（◎○に勝てる能力がある馬）
+        if len(sorted_by_win) > 2:
+            third = sorted_by_win.iloc[2]
+            if third['馬番'] not in assigned:
+                marks[third['馬番']] = '▲'
+                assigned.add(third['馬番'])
+
+        if has_odds and (df_pred['オッズ'] > 0).any():
+            # ☆: バリュー > 0 かつ オッズ >= 10.0（大穴バリュー馬）
+            remaining = df_pred[~df_pred['馬番'].isin(assigned)]
+            star_cands = remaining[(remaining['バリュー'] > 0) & (remaining['オッズ'] >= 10.0)]
+            if len(star_cands) > 0:
+                star = star_cands.sort_values('バリュー', ascending=False).iloc[0]
+                marks[star['馬番']] = '☆'
+                assigned.add(star['馬番'])
+
+        # △: ◎○▲☆以外で複勝予測上位（2・3着に来る可能性がある馬、最大2頭）
+        remaining = df_pred[~df_pred['馬番'].isin(assigned)]
+        renka_cands = remaining.sort_values('複勝予測', ascending=False)
+        for _, r in renka_cands.head(2).iterrows():
+            if r['複勝予測'] >= 0.20:
+                marks[r['馬番']] = '△'
+                assigned.add(r['馬番'])
+
+        # 注: 残りで複勝予測が一定以上（最大2頭）
+        remaining = df_pred[~df_pred['馬番'].isin(assigned)]
+        note_threshold = 0.25 if has_odds else 0.20
+        note_cands = remaining[remaining['複勝予測'] >= note_threshold].sort_values('複勝予測', ascending=False)
+        for _, r in note_cands.head(2).iterrows():
+            marks[r['馬番']] = '注'
+            assigned.add(r['馬番'])
+
+        # 信頼度チェック: 低信頼なら「?」付加
+        def apply_mark(row):
+            m = marks.get(row['馬番'], '')
+            if m and row.get('特徴量信頼度', 1.0) < 0.25:
+                m += '?'
+            return m
+
+        df_pred['印'] = df_pred.apply(apply_mark, axis=1)
+        return df_pred
 
     def _old_display_code_removed(self):
         """旧表示コード（削除済み）"""
@@ -3375,20 +3442,8 @@ class KeibaGUIv3:
             feat_rel = row.get('特徴量信頼度', 1.0)
             low_reliability = feat_rel < 0.25
 
-            # 印（勝率予測順の場合のみ）
-            if hasattr(self, 'last_sort_column') and self.last_sort_column == '勝率予測':
-                if i == 1:
-                    mark = "◎" if not low_reliability else "◎?"
-                elif i == 2:
-                    mark = "○" if not low_reliability else "○?"
-                elif i == 3:
-                    mark = "▲" if not low_reliability else "▲?"
-                elif i <= 5:
-                    mark = "△" if not low_reliability else "△?"
-                else:
-                    mark = ""  # 6位以下は空欄（ノイズ削減）
-            else:
-                mark = ""
+            # 印: 事前計算済みの'印'カラムを使用（ソート変更しても維持）
+            mark = row.get('印', '')
 
             # 各列の値
             waku = row.get('枠番', '')
@@ -3481,20 +3536,30 @@ class KeibaGUIv3:
             self.recommend_text.config(state=tk.DISABLED)
             return
 
-        # トップ3を抽出
-        top1 = df_pred.iloc[0]
-        top2 = df_pred.iloc[1] if len(df_pred) > 1 else None
-        top3 = df_pred.iloc[2] if len(df_pred) > 2 else None
+        # 印から各役割の馬を取得するヘルパー
+        def get_mark_horse(mark_char):
+            matched = df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
+            return matched.iloc[0] if len(matched) > 0 else None
+
+        def get_mark_horses(mark_char):
+            return df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
+
+        honmei = get_mark_horse('◎')  # 本命
+        taikou = get_mark_horse('○')  # 対抗
+        tanana = get_mark_horse('▲')  # 単穴
+        star   = get_mark_horse('☆')  # 星
+        renka  = get_mark_horses('△') # 連下
+        chuui  = get_mark_horses('注') # 注意
 
         # 推奨馬券を構築
         recommend_lines = []
 
-        win_proba = top1['勝率予測']
-        top1_value = top1.get('バリュー', 0)
+        # 本命の勝率（購入判定に使用）
+        win_proba = honmei['勝率予測'] if honmei is not None else 0
+        top1_value = honmei.get('バリュー', 0) if honmei is not None else 0
 
         # === 購入判定（バリューベット戦略） ===
         if has_odds and 'バリュー' in df_pred.columns:
-            # バリューベット判定
             if win_proba >= 0.50:
                 signal = "【超高確信】単勝65%/複勝83%実績"
                 action = "強気の単勝勝負"
@@ -3514,7 +3579,6 @@ class KeibaGUIv3:
                 signal = "【見送り推奨】"
                 action = "このレースは見送り or 押さえ程度"
         else:
-            # オッズなし（未来レース）
             if win_proba >= 0.50:
                 signal = "【超高確信】単勝65%/複勝83%実績"
                 action = "強気の単勝勝負"
@@ -3532,31 +3596,44 @@ class KeibaGUIv3:
         recommend_lines.append(f"  {action}")
 
         # 特徴量信頼度チェック
-        top1_feat_rel = top1.get('特徴量信頼度', 0)
-        if top1_feat_rel < 0.5:
-            recommend_lines.append(f"  WARNING: データ不足 (有効{top1_feat_rel*100:.0f}%) 精度低下の可能性")
+        if honmei is not None:
+            top1_feat_rel = honmei.get('特徴量信頼度', 0)
+            if top1_feat_rel < 0.5:
+                recommend_lines.append(f"  WARNING: データ不足 (有効{top1_feat_rel*100:.0f}%) 精度低下の可能性")
         recommend_lines.append("")
 
-        # === 本命・対抗・穴 ===
-        recommend_lines.append("【予測順位】")
-        past_record = top1.get('過去成績', '')
-        odds_str = f" オッズ{top1['オッズ']:.1f}" if top1.get('オッズ', 0) > 0 else ""
-        value_str = f" V={top1_value:+.2f}" if has_odds and top1.get('オッズ', 0) > 0 else ""
-        recommend_lines.append(f"  [本命] {top1['馬番']}番 {top1['馬名']} 勝率{win_proba*100:.1f}%{odds_str}{value_str}")
-        if past_record:
-            recommend_lines.append(f"         {past_record}")
+        # === 予測印 ===
+        recommend_lines.append("【予測印】")
 
-        if top2 is not None:
-            v2 = top2.get('バリュー', 0)
-            o2 = f" オッズ{top2['オッズ']:.1f}" if top2.get('オッズ', 0) > 0 else ""
-            v2s = f" V={v2:+.2f}" if has_odds and top2.get('オッズ', 0) > 0 else ""
-            recommend_lines.append(f"  [対抗] {top2['馬番']}番 {top2['馬名']} 勝率{top2['勝率予測']*100:.1f}%{o2}{v2s}")
+        def format_horse_line(mark_char, label, horse):
+            """印付き馬の表示行を生成"""
+            odds_s = f" オッズ{horse['オッズ']:.1f}" if horse.get('オッズ', 0) > 0 else ""
+            ev_s = f" EV={horse['期待値']:.2f}" if horse.get('期待値', 0) > 0 else ""
+            val_s = f" V={horse['バリュー']:+.3f}" if has_odds and horse.get('オッズ', 0) > 0 else ""
+            line = f"  {mark_char} {horse['馬番']}番 {horse['馬名']} 勝率{horse['勝率予測']*100:.1f}%{odds_s}"
+            if mark_char == '▲' and ev_s:
+                line += ev_s + "  <- 期待値最高"
+            elif mark_char == '☆' and val_s:
+                line += val_s + "  <- 大穴バリュー"
+            elif ev_s:
+                line += ev_s
+            return line
 
-        if top3 is not None:
-            v3 = top3.get('バリュー', 0)
-            o3 = f" オッズ{top3['オッズ']:.1f}" if top3.get('オッズ', 0) > 0 else ""
-            v3s = f" V={v3:+.2f}" if has_odds and top3.get('オッズ', 0) > 0 else ""
-            recommend_lines.append(f"  [単穴] {top3['馬番']}番 {top3['馬名']} 勝率{top3['勝率予測']*100:.1f}%{o3}{v3s}")
+        if honmei is not None:
+            recommend_lines.append(format_horse_line('◎', '本命', honmei))
+            past_record = honmei.get('過去成績', '')
+            if past_record:
+                recommend_lines.append(f"         {past_record}")
+        if taikou is not None:
+            recommend_lines.append(format_horse_line('○', '対抗', taikou))
+        if tanana is not None:
+            recommend_lines.append(format_horse_line('▲', '単穴', tanana))
+        if star is not None:
+            recommend_lines.append(format_horse_line('☆', '星', star))
+        for _, r in renka.iterrows():
+            recommend_lines.append(format_horse_line('△', '連下', r))
+        for _, r in chuui.iterrows():
+            recommend_lines.append(format_horse_line('注', '注意', r))
 
         # === バリューベット推奨（オッズあり時） ===
         if has_odds and 'バリュー' in df_pred.columns:
@@ -3565,9 +3642,9 @@ class KeibaGUIv3:
             value_horses = df_pred[df_pred['バリュー'] >= 0.05].sort_values('バリュー', ascending=False)
             if len(value_horses) > 0:
                 for _, row in value_horses.head(5).iterrows():
-                    mark = "★" if row['バリュー'] >= 0.15 else "☆" if row['バリュー'] >= 0.10 else "△"
+                    vm = "★" if row['バリュー'] >= 0.15 else "☆" if row['バリュー'] >= 0.10 else "△"
                     recommend_lines.append(
-                        f"  {mark} {row['馬番']}番 {row['馬名']}: "
+                        f"  {vm} {row['馬番']}番 {row['馬名']}: "
                         f"勝率{row['勝率予測']*100:.1f}% オッズ{row['オッズ']:.1f} "
                         f"V={row['バリュー']:+.2f} EV={row['期待値']:.2f}"
                     )
@@ -3577,13 +3654,121 @@ class KeibaGUIv3:
             recommend_lines.append("")
             recommend_lines.append("※ オッズ未発表: バリュー判定はオッズ確定後に")
 
+        # === 勝率に応じた最適買い目 ===
+        # 紐馬候補を集める（○▲△から）
+        himo_list = []
+        if taikou is not None:
+            himo_list.append(taikou)
+        if tanana is not None:
+            himo_list.append(tanana)
+        for _, r in renka.head(2).iterrows():
+            himo_list.append(r)
+        # 重複除去
+        seen = set()
+        himo_unique = []
+        for h in himo_list:
+            if h['馬番'] not in seen:
+                seen.add(h['馬番'])
+                himo_unique.append(h)
+        himo_list = himo_unique[:3]
+
+        # 3連複/3連単用の3着候補
+        third = tanana
+        if third is None:
+            sorted_by_win = df_pred.sort_values('勝率予測', ascending=False)
+            for _, r in sorted_by_win.iterrows():
+                if honmei is not None and taikou is not None:
+                    if r['馬番'] != honmei['馬番'] and r['馬番'] != taikou['馬番']:
+                        third = r
+                        break
+
         recommend_lines.append("")
-        recommend_lines.append("【推奨馬券】")
-        recommend_lines.append(f"  単勝: {top1['馬番']}番")
-        if top2 is not None:
-            recommend_lines.append(f"  馬連: {top1['馬番']}-{top2['馬番']}")
-        if top3 is not None:
-            recommend_lines.append(f"  3連複: {top1['馬番']}-{top2['馬番']}-{top3['馬番']}")
+        recommend_lines.append("【推奨買い目】勝率に応じた最適パターン")
+
+        if honmei is not None and taikou is not None and third is not None:
+            uma1 = int(honmei['馬番'])
+            uma2 = int(taikou['馬番'])
+            uma3 = int(third['馬番'])
+
+            if win_proba >= 0.50:
+                # 勝率50%以上: 本命レース
+                recommend_lines.append("  ─ 本命レース（勝率50%以上）─")
+                recommend_lines.append(f"  単勝: {uma1}番 300円")
+                recommend_lines.append(f"  馬連: {uma1}-{uma2} 200円")
+                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 100円")
+                recommend_lines.append(f"  → 合計600円 (単勝ROI212%/馬連168%/3連複302%)")
+
+            elif win_proba >= 0.40:
+                # 勝率40-50%: 準本命
+                recommend_lines.append("  ─ 準本命（勝率40-50%）─")
+                recommend_lines.append(f"  単勝: {uma1}番 300円")
+                recommend_lines.append(f"  馬連: {uma1}-{uma2} 200円")
+                recommend_lines.append(f"  → 合計500円 (単勝ROI272%)")
+                # 3連複は軸2頭推奨
+                if len(himo_list) >= 2:
+                    himo_nums = [str(int(h['馬番'])) for h in himo_list[:2]]
+                    recommend_lines.append(f"  [参考] 3連複軸2頭: {uma1}-{uma2}→{','.join(himo_nums)} (2点/200円)")
+
+            elif win_proba >= 0.30:
+                # 勝率30-40%: 中穴
+                recommend_lines.append("  ─ 中穴（勝率30-40%）─")
+                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 100円")
+                recommend_lines.append(f"  ワイド: {uma1}-{uma2} 100円")
+                recommend_lines.append(f"  単勝: {uma1}番 100円")
+                recommend_lines.append(f"  → 合計300円 (3連複ROI234%/ワイドROI219%)")
+
+            elif win_proba >= 0.20:
+                # 勝率20-30%: 穴狙い
+                recommend_lines.append("  ─ 穴狙い（勝率20-30%）─")
+                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 200円")
+                recommend_lines.append(f"  単勝: {uma1}番 200円")
+                recommend_lines.append(f"  馬連: {uma1}-{uma2} 100円")
+                recommend_lines.append(f"  → 合計500円 (3連複ROI349%/単勝ROI226%)")
+                # 馬連流しも有効
+                if len(himo_list) >= 2:
+                    himo_nums = [str(int(h['馬番'])) for h in himo_list]
+                    recommend_lines.append(f"  [参考] 馬連流し: {uma1}→{','.join(himo_nums)} ({len(himo_list)}点/{len(himo_list)*100}円)")
+
+            elif win_proba >= 0.10:
+                # 勝率10-20%: 大穴ゾーン ★最高効率
+                recommend_lines.append("  ─ 大穴ゾーン（勝率10-20%）★最高効率 ─")
+                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 300円 ★ROI787%")
+                recommend_lines.append(f"  単勝: {uma1}番 200円")
+                recommend_lines.append(f"  → 合計500円")
+                # 3連単BOXも有効
+                recommend_lines.append(f"  [高効率] 3連単BOX: {uma1}-{uma2}-{uma3} (6点/600円) ROI595%")
+
+            else:
+                # 勝率10%未満: 超大穴
+                recommend_lines.append("  ─ 超大穴（勝率10%未満）─")
+                recommend_lines.append(f"  単勝: {uma1}番 100円のみ推奨")
+                recommend_lines.append(f"  ※3連複の効率が急落するため見送り推奨")
+
+        # === バリュー馬がいる場合の追加推奨 ===
+        if has_odds and '期待値' in df_pred.columns:
+            ev_candidates = df_pred[df_pred['期待値'] >= 1.2].sort_values('期待値', ascending=False)
+            if len(ev_candidates) > 0:
+                best_ev = ev_candidates.iloc[0]
+                if honmei is None or best_ev['馬番'] != honmei['馬番']:
+                    recommend_lines.append("")
+                    recommend_lines.append("【バリュー追加】")
+                    recommend_lines.append(f"  単勝: {int(best_ev['馬番'])}番 {best_ev['馬名']} (EV={best_ev['期待値']:.2f}) 100-200円")
+
+        # === 参考: 流し・ボックス ===
+        if honmei is not None and len(himo_list) >= 2:
+            recommend_lines.append("")
+            recommend_lines.append("【参考: 流し・ボックス】")
+            himo_nums = [str(int(h['馬番'])) for h in himo_list]
+            uma1 = int(honmei['馬番'])
+            recommend_lines.append(f"  ワイド流し: {uma1}→{','.join(himo_nums)} ({len(himo_list)}点/{len(himo_list)*100}円)")
+            box_members = [honmei] + himo_list
+            box_nums = [str(int(h['馬番'])) for h in box_members]
+            n_box = len(box_members)
+            if n_box >= 3:
+                n_sanren = n_box * (n_box - 1) * (n_box - 2) // 6
+                recommend_lines.append(f"  3連複BOX: {'-'.join(box_nums)} ({n_sanren}点/{n_sanren*100}円)")
+            if n_box == 3:
+                recommend_lines.append(f"  3連単BOX: {'-'.join(box_nums)} (6点/600円)")
 
         # テキストを表示
         for line in recommend_lines:
