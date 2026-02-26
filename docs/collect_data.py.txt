@@ -1,0 +1,767 @@
+# collect_data.py
+# netkeiba.comから指定期間のレースデータ（出馬表、結果、払い戻し）を収集するスクリプト
+
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import time
+from datetime import datetime
+import traceback
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException
+from selenium.webdriver.chrome.service import Service as ChromeService # ChromeDriverパス指定用
+import os
+import json
+
+# --- 設定項目 ---
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ 必ずご自身の環境に合わせて設定してください ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+# 取得対象期間
+TARGET_START_YEAR = 2020
+TARGET_START_MONTH = 1
+TARGET_END_YEAR = 2024
+TARGET_END_MONTH = 12 # ★最初は必ず短い期間(1ヶ月など)でテスト！
+
+# 保存するファイル名のベース
+SAVE_FILENAME_BASE = "netkeiba_data"
+
+# スクレイピング設定
+REQUEST_TIMEOUT = 20 # requestsのタイムアウト時間(秒)
+SELENIUM_WAIT_TIMEOUT = 30 # Seleniumの待機タイムアウト時間(秒)
+SLEEP_TIME_PER_PAGE = 1.5 # 各ページアクセス後の待機時間(秒) ★重要: サイト負荷軽減のため必ず設定！
+SLEEP_TIME_PER_RACE = 0.2 # 各レース処理後の短い待機時間 (任意)
+
+# User-Agent (ご自身のブラウザのUser-Agentに置き換えることを推奨)
+# 確認方法: ブラウザで「What is my user agent?」と検索
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36' # 適宜変更
+
+# ChromeDriverのパス (環境変数PATHに追加していない場合)
+# 例: '/path/to/chromedriver.exe' or 'C:/path/to/chromedriver.exe'
+# 環境変数PATHに設定済みの場合は None のままでOK
+# ChromeDriverのバージョンは、PCにインストールされているChromeブラウザのバージョンに合わせてください。
+# https://chromedriver.chromium.org/downloads
+# または https://googlechromelabs.github.io/chrome-for-testing/
+CHROME_DRIVER_PATH = None
+
+# データ保存先ディレクトリ (スクリプトと同じ場所に保存する場合 '.')
+SAVE_DIRECTORY = "."
+
+# 中断・再開用ログファイル
+PROCESSED_LOG_FILE = os.path.join(SAVE_DIRECTORY, "processed_race_ids.log")
+
+# --- ヘルパー関数: WebDriverの初期化・終了 ---
+# Seleniumの関数内で毎回driverを初期化・終了すると効率が悪い場合があるため、外で管理することも検討可
+# 今回は各関数内で初期化・終了する元の実装を尊重
+
+# --- 部品関数1: 開催日取得 (requests) ---
+def get_kaisai_dates(year, month):
+    """指定年月の開催日リストを取得"""
+    url = f'https://race.netkeiba.com/top/calendar.html?year={year}&month={month}'
+    print(f"  開催日取得試行: {url}")
+    headers = {'User-Agent': USER_AGENT}
+    try:
+        time.sleep(SLEEP_TIME_PER_PAGE) # ★待機
+        r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status() # HTTPエラーチェック
+        r.encoding = r.apparent_encoding # 文字化け対策
+        soup = BeautifulSoup(r.content, 'lxml')
+        kaisai_dates = []
+        # カレンダーテーブル内の開催日リンクを探す
+        selector = '.Calendar_Table .Week td > a[href*="kaisai_date="]'
+        for a_tag in soup.select(selector):
+            href = a_tag.get('href')
+            match = re.search(r'kaisai_date=(\d{8})', href)
+            if match:
+                kaisai_dates.append(match.group(1))
+        unique_dates = sorted(list(set(kaisai_dates)))
+        return unique_dates
+    except requests.exceptions.Timeout:
+        print(f"  タイムアウトエラー: {url}")
+    except requests.exceptions.RequestException as e:
+        print(f"  ページ取得エラー ({url}): {e}")
+    except Exception as e:
+        print(f"  予期せぬエラー (get_kaisai_dates) ({url}): {e}")
+    return [] # エラー時は空リスト
+
+# --- 部品関数2: レースID取得 (Selenium) ---
+def get_race_ids(date_str):
+    """指定日のレースIDリストを取得"""
+    url = f'https://race.netkeiba.com/top/race_list.html?kaisai_date={date_str}'
+    driver = None
+    options = webdriver.ChromeOptions()
+    options.add_argument(f'--user-agent={USER_AGENT}')
+    # options.add_argument('--headless') # バックグラウンド実行
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument("--log-level=3")
+    options.add_experimental_option('excludeSwitches', ['enable-logging']) # DevTools listeningメッセージ抑制
+
+    try:
+        # ChromeDriverのパスを指定または自動検出
+        if CHROME_DRIVER_PATH and os.path.exists(CHROME_DRIVER_PATH):
+             service = ChromeService(executable_path=CHROME_DRIVER_PATH)
+             driver = webdriver.Chrome(service=service, options=options)
+        elif CHROME_DRIVER_PATH:
+             print(f"    警告: 指定されたChromeDriverが見つかりません: {CHROME_DRIVER_PATH}")
+             print("    環境変数PATHに設定されたChromeDriverを使用します。")
+             driver = webdriver.Chrome(options=options)
+        else:
+             driver = webdriver.Chrome(options=options)
+
+        wait = WebDriverWait(driver, SELENIUM_WAIT_TIMEOUT)
+        time.sleep(SLEEP_TIME_PER_PAGE / 2)
+        driver.get(url)
+        # レースリストエリアが表示されるか、「レースがありません」が表示されるまで待つ
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, '#RaceTopRace, .RaceList_Box, .no_race, .alert'))
+        )
+        time.sleep(SLEEP_TIME_PER_PAGE / 2)
+        soup = BeautifulSoup(driver.page_source, 'lxml')
+        race_ids = []
+        # レース結果へのリンクを探す (提供されたセレクタを使用)
+        selector = '.RaceList_DataItem > a:first-of-type'
+        found_links = soup.select(selector)
+
+        if not found_links:
+             if soup.select_one('.no_race') or soup.select_one('.RaceList_Item02'):
+                 print(f"      情報: {date_str} にはレースがありませんでした。")
+                 return []
+             else:
+                 print(f"    警告: レースIDリンクが見つかりませんでした。ページ構造を確認してください。 ({date_str})")
+                 # with open(f"debug_race_list_{date_str}.html", "w", encoding="utf-8") as f: f.write(soup.prettify()) # デバッグ用
+                 return []
+
+        for a_tag in found_links:
+            href = a_tag.get('href')
+            if not href: continue
+            # race_id=XXXX& の形式から抽出 (提供されたコードのロジック)
+            match = re.search(r'race_id=(\d+)&', href)
+            if match:
+                race_ids.append(match.group(1))
+            else:
+                 # 代替パターンも試す
+                 match_alt = re.search(r'/race/result/(\d+)', href) # 例: /race/result/2024...
+                 if match_alt:
+                      race_ids.append(match_alt.group(1))
+                 else:
+                      print(f"    警告: レースIDの抽出に失敗しました: {href}")
+
+        unique_race_ids = sorted(list(set(race_ids)))
+        return unique_race_ids
+
+    except TimeoutException:
+        print(f"  Seleniumタイムアウトエラー (要素待機): {url}")
+    except WebDriverException as e:
+        print(f"  WebDriverエラー ({url}): {e}")
+        print("  ChromeDriver/Chromeバージョン・パス設定を確認してください。")
+    except Exception as e:
+        print(f"  予期せぬエラー (get_race_ids) ({url}): {e}")
+        traceback.print_exc()
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception: pass
+    return [] # エラー時は空リスト
+
+# --- 部品関数3: レース結果テーブル取得 (requests) ---
+def get_result_table(race_id):
+    """レース結果テーブルデータをリストのリストで取得"""
+    # result.html か db.netkeiba.com/race/ か、どちらが安定しているか要検討
+    # url = f'https://race.netkeiba.com/race/result.html?race_id={race_id}'
+    url = f'https://db.netkeiba.com/race/{race_id}/' # DBの方が構造が安定している可能性
+    print(f"      結果取得試行: {url}")
+    headers = {'User-Agent': USER_AGENT}
+    try:
+        time.sleep(SLEEP_TIME_PER_PAGE) # ★待機
+        r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.content, 'lxml')
+        result_table = []
+        # テーブルを探す (提供されたIDセレクタを使用)
+        table_tag = soup.select_one('#All_Result_Table') # db.netkeiba.com はこのIDが多い
+        if not table_tag:
+             # 代替クラス名も試す
+             table_tag = soup.find('table', class_=re.compile(r'race_table.*|ResultTable.*'))
+        if not table_tag:
+             if soup.find(string=re.compile("出走取消|開催中止")):
+                 print(f"        情報: レース結果が存在しないようです（取消/中止など） ({race_id})")
+             else:
+                 print(f"      警告: 結果テーブルが見つかりませんでした ({race_id})。")
+                 # with open(f"debug_result_{race_id}.html", "w", encoding="utf-8") as f: f.write(soup.prettify()) # デバッグ用
+             return []
+
+        # テーブルの行を取得 (提供されたセレクタを使用)
+        for tr_tag in table_tag.select('tr'):
+            # セルのテキストを取得 (提供されたコードのロジック)
+            row_data = [data_tag.text.strip() for data_tag in tr_tag.select('th, td')]
+            if row_data and any(row_data): # 空行を除外
+                result_table.append(row_data)
+        return result_table
+
+    except requests.exceptions.Timeout:
+        print(f"      タイムアウトエラー: {url}")
+    except requests.exceptions.RequestException as e:
+        print(f"      ページ取得エラー ({url}): {e}")
+    except Exception as e:
+        print(f"      予期せぬエラー (get_result_table) ({url}): {e}")
+        traceback.print_exc()
+    return [] # エラー時は空リスト
+
+# --- 部品関数4: 払い戻しテーブル取得 (requests) ---
+def get_pay_table(race_id):
+    """払い戻しテーブルデータをリストのリストで取得"""
+    # url = f'https://race.netkeiba.com/race/result.html?race_id={race_id}'
+    url = f'https://db.netkeiba.com/race/{race_id}/' # DBの方が安定している可能性
+    print(f"      払戻取得試行: {url}")
+    headers = {'User-Agent': USER_AGENT}
+    try:
+        time.sleep(SLEEP_TIME_PER_PAGE) # ★待機
+        r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.content, 'lxml')
+        pay_table = []
+        # テーブルを探す (提供されたセレクタを使用、db.netkeiba.com用も考慮)
+        payout_area = soup.select_one('.pay_table_01') # race.netkeiba.com用？
+        if not payout_area:
+            payout_area = soup.find('div', class_='payout_block') # db.netkeiba.com用？
+        if not payout_area:
+            if soup.find(string=re.compile("出走取消|開催中止")):
+                 print(f"        情報: 払い戻しが存在しないようです（取消/中止など） ({race_id})")
+            else:
+                 print(f"      警告: 払い戻しテーブル/エリアが見つかりませんでした ({race_id})。")
+                 # with open(f"debug_payout_{race_id}.html", "w", encoding="utf-8") as f: f.write(soup.prettify()) # デバッグ用
+            return []
+
+        # エリア内のテーブル行を取得
+        for table_tag in payout_area.find_all('table'):
+            for tr_tag in table_tag.select('tr'):
+                # get_text('\n') で<br>を改行に変換 (提供されたコードのロジック)
+                row_data = [data_tag.get_text('\n').strip() for data_tag in tr_tag.select('th, td')]
+                if row_data and any(row_data):
+                    pay_table.append(row_data)
+        return pay_table
+
+    except requests.exceptions.Timeout:
+        print(f"      タイムアウトエラー: {url}")
+    except requests.exceptions.RequestException as e:
+        print(f"      ページ取得エラー ({url}): {e}")
+    except Exception as e:
+        print(f"      予期せぬエラー (get_pay_table) ({url}): {e}")
+        traceback.print_exc()
+    return [] # エラー時は空リスト
+
+
+# --- 部品関数5: 出馬表テーブル取得 (Selenium) ---
+def get_shutuba_table(race_id):
+    """出馬表テーブルデータをリストのリストで取得"""
+    url = f'https://race.netkeiba.com/race/shutuba.html?race_id={race_id}' # 出馬表URL
+    print(f"      出馬表取得試行: {url}")
+    driver = None
+    options = webdriver.ChromeOptions()
+    options.add_argument(f'--user-agent={USER_AGENT}')
+    # options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument("--log-level=3")
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+
+    try:
+        if CHROME_DRIVER_PATH and os.path.exists(CHROME_DRIVER_PATH):
+             service = ChromeService(executable_path=CHROME_DRIVER_PATH)
+             driver = webdriver.Chrome(service=service, options=options)
+        elif CHROME_DRIVER_PATH:
+             print(f"    警告: 指定されたChromeDriverが見つかりません: {CHROME_DRIVER_PATH}")
+             print("    環境変数PATHに設定されたChromeDriverを使用します。")
+             driver = webdriver.Chrome(options=options)
+        else:
+             driver = webdriver.Chrome(options=options)
+
+        wait = WebDriverWait(driver, SELENIUM_WAIT_TIMEOUT)
+        time.sleep(SLEEP_TIME_PER_PAGE / 2)
+        driver.get(url)
+        # 出馬表テーブルが表示されるまで待つ (提供されたセレクタを使用)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.ShutubaTable')))
+        time.sleep(SLEEP_TIME_PER_PAGE / 2)
+        soup = BeautifulSoup(driver.page_source, 'lxml')
+        shutuba_table = []
+        table_tag = soup.select_one('.ShutubaTable')
+        if not table_tag:
+             print(f"      警告: 出馬表テーブルが見つかりませんでした ({race_id})。")
+             # with open(f"debug_shutuba_{race_id}.html", "w", encoding="utf-8") as f: f.write(soup.prettify()) # デバッグ用
+             return []
+
+        # ヘッダー取得 (提供されたコードのロジック)
+        header_tr_tag = table_tag.select_one('thead > tr:first-of-type')
+        if header_tr_tag:
+            # オッズ列の改行を除去し、最初の11列を取得
+            header = [th_tag.text.strip().split('\n')[0] for th_tag in header_tr_tag.select('th')[:11]]
+            shutuba_table.append(header)
+        else:
+            print(f"      警告: 出馬表ヘッダーが見つかりませんでした ({race_id})。")
+            return [] # ヘッダーがなければデータも取れない
+
+        # データ行取得 (提供されたコードのロジック)
+        for tbody_tr_tag in table_tag.select('tbody > tr'):
+            row = []
+            td_tags = tbody_tr_tag.select('td')[:11] # 最初の11セル
+            if len(td_tags) < len(header): # セル数が足りない場合はスキップ
+                print(f"      警告: 出馬表データ行のセル数が不足しています ({race_id})。")
+                continue
+            for i, td_tag in enumerate(td_tags):
+                # 印列のみ別処理 (提供されたコードのロジック - ヘッダーとのインデックスずれに注意)
+                # header=['枠', '馬番', '印', '馬名', ...] の場合、印はi==2
+                if i == 2 and header[i] == '印':
+                    try:
+                        # selectBoxクラスがない場合も考慮
+                        mark_tag = td_tag.select_one('.selectBox, .Txt_Mark') # 他のクラスも試す
+                        row.append(mark_tag.text.strip() if mark_tag else td_tag.text.strip())
+                    except Exception as e_mark:
+                        print(f"      警告: 印列の取得エラー: {e_mark}")
+                        row.append(td_tag.text.strip()) # エラー時はそのままテキスト
+                else:
+                    row.append(td_tag.text.strip())
+            shutuba_table.append(row)
+        return shutuba_table
+
+    except TimeoutException:
+        print(f"  Seleniumタイムアウトエラー (要素待機): {url}")
+    except WebDriverException as e:
+        print(f"  WebDriverエラー ({url}): {e}")
+        print("  ChromeDriver/Chromeバージョン・パス設定を確認してください。")
+    except NoSuchElementException:
+         print(f"    警告: 出馬表テーブル要素が見つかりませんでした ({race_id})。")
+         # with open(f"debug_shutuba_{race_id}.html", "w", encoding="utf-8") as f: f.write(soup.page_source) # デバッグ用
+    except Exception as e:
+        print(f"  予期せぬエラー (get_shutuba_table) ({url}): {e}")
+        traceback.print_exc()
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception: pass
+    return [] # エラー時は空リスト
+
+# --- データ整形用ヘルパー関数 ---
+def format_result_data(result_table_list, race_id):
+    """get_result_tableの結果をDataFrameに整形"""
+    if not result_table_list or len(result_table_list) < 2:
+        return None
+    header = [h.replace(' ', '').replace('\n', '') for h in result_table_list[0]]
+    data_rows = result_table_list[1:]
+    try:
+        # 列名の重複チェックとリネーム
+        if len(header) != len(set(header)):
+            new_header = []
+            counts = {}
+            for h in header:
+                norm_h = h.strip()
+                if norm_h in counts:
+                    counts[norm_h] += 1
+                    new_header.append(f"{norm_h}_{counts[norm_h]}")
+                else:
+                    counts[norm_h] = 0
+                    new_header.append(norm_h)
+            header = new_header
+
+        # DataFrame作成 (列数が一致するか確認)
+        if len(data_rows[0]) != len(header):
+             print(f"      警告: 結果テーブルのヘッダー({len(header)})とデータ({len(data_rows[0])})の列数が不一致です。スキップします。({race_id})")
+             print(f"      Header: {header}")
+             print(f"      Data[0]: {data_rows[0]}")
+             return None
+
+        df = pd.DataFrame(data_rows, columns=header)
+
+        # 列名統一マップ (より多くの可能性を考慮)
+        rename_map = {
+            '着順': 'Rank', '枠': 'Waku', '馬番': 'Umaban', '馬名': 'HorseName',
+            '性齢': 'SexAge', '斤量': 'Load', '騎手': 'JockeyName', 'タイム': 'Time',
+            '着差': 'Diff', 'ﾀｲﾑ指数': 'TimeIndex', '通過': 'Passage', '上がり': 'Agari', # '後3F'だけでなく
+            '単勝': 'Odds', '人気': 'Ninki', '馬体重': 'WeightInfo', '馬体重(増減)': 'WeightInfo',
+            '調教師': 'TrainerName', '厩舎': 'TrainerName',
+            # 他に必要そうな列名があれば追加
+        }
+        df.rename(columns=lambda x: rename_map.get(x.strip(), x.strip()), inplace=True)
+
+        # データクリーニング
+        df['race_id'] = race_id
+        numeric_cols = ['Rank', 'Waku', 'Umaban', 'Load', 'Ninki', 'Odds', 'Agari', 'TimeIndex']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        if 'WeightInfo' in df.columns:
+            df['Weight'] = df['WeightInfo'].str.extract(r'(\d+)', expand=False).astype(float)
+            df['WeightDiff'] = df['WeightInfo'].str.extract(r'\(([-+]?\d+)\)', expand=False).astype(float)
+            # df.drop('WeightInfo', axis=1, inplace=True, errors='ignore') # 元列を残す場合もある
+
+        if 'SexAge' in df.columns:
+             df['Sex'] = df['SexAge'].str[0]
+             df['Age'] = pd.to_numeric(df['SexAge'].str[1:], errors='coerce')
+
+        # リンクからID抽出 (オプション)
+        # id_cols = {'HorseName': 'horse_id', 'JockeyName': 'jockey_id', 'TrainerName': 'trainer_id'}
+        # for col, id_col in id_cols.items():
+        #     if col in df.columns:
+        #         # df[id_col] = df[col].apply(lambda x: ...) # BeautifulSoupでaタグのhrefを取得する処理が必要
+
+        # 着順に数字以外(除外、中止など)が含まれる場合NaNにする
+        if 'Rank' in df.columns:
+             df['Rank'] = pd.to_numeric(df['Rank'], errors='coerce')
+
+
+        return df
+
+    except ValueError as ve:
+         print(f"    エラー: 結果DataFrame作成時の列数不一致など ({race_id}): {ve}")
+    except Exception as e:
+        print(f"    エラー: 結果DataFrameの整形中にエラー ({race_id}): {e}")
+        traceback.print_exc()
+    return None
+
+def format_shutuba_data(shutuba_table_list, race_id):
+    """get_shutuba_tableの結果をDataFrameに整形"""
+    if not shutuba_table_list or len(shutuba_table_list) < 2:
+        return None
+    header = [h.replace(' ', '').replace('\n', '') for h in shutuba_table_list[0]]
+    data_rows = shutuba_table_list[1:]
+    try:
+        # 列名統一マップ (出馬表用)
+        rename_map = {
+            '枠': 'Waku', '馬番': 'Umaban', '印': 'Mark', '馬名': 'HorseName',
+            '性齢': 'SexAge', '斤量': 'Load', '騎手': 'JockeyName', '厩舎': 'TrainerName',
+            '馬体重(増減)': 'WeightInfoShutuba', '馬体重': 'WeightInfoShutuba', # 事前発表の場合
+            'オッズ': 'OddsShutuba', '単勝': 'OddsShutuba', # 結果とかぶらないように
+            '人気': 'NinkiShutuba'
+        }
+        # 提供されたコードで取得したヘッダーに合わせて調整
+        header_renamed = [rename_map.get(h.strip(), h.strip()) for h in header]
+
+        # DataFrame作成 (列数が一致するか確認)
+        if len(data_rows[0]) != len(header_renamed):
+             print(f"      警告: 出馬表テーブルのヘッダー({len(header_renamed)})とデータ({len(data_rows[0])})の列数が不一致です。スキップします。({race_id})")
+             print(f"      Header: {header_renamed}")
+             print(f"      Data[0]: {data_rows[0]}")
+             return None
+
+        df = pd.DataFrame(data_rows, columns=header_renamed)
+
+        df['race_id'] = race_id
+        # 型変換など (結果データと同様に)
+        numeric_cols = ['Waku', 'Umaban', 'Load', 'OddsShutuba', 'NinkiShutuba']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        if 'WeightInfoShutuba' in df.columns:
+            df['WeightShutuba'] = df['WeightInfoShutuba'].str.extract(r'(\d+)', expand=False).astype(float)
+            # 増減情報は出馬表段階でないことが多い
+            # df['WeightDiffShutuba'] = df['WeightInfoShutuba'].str.extract(r'\(([-+]?\d+)\)', expand=False).astype(float)
+            # df.drop('WeightInfoShutuba', axis=1, inplace=True, errors='ignore')
+
+        if 'SexAge' in df.columns:
+             df['Sex'] = df['SexAge'].str[0]
+             df['Age'] = pd.to_numeric(df['SexAge'].str[1:], errors='coerce')
+
+        # 馬ID, 騎手IDなどをリンクから取得 (オプション)
+
+        return df
+
+    except ValueError as ve:
+         print(f"    エラー: 出馬表DataFrame作成時の列数不一致など ({race_id}): {ve}")
+    except Exception as e:
+        print(f"    エラー: 出馬表DataFrameの整形中にエラー ({race_id}): {e}")
+        traceback.print_exc()
+    return None
+
+def format_payout_data(payouts_list, race_id):
+    """get_pay_tableの結果を整形して辞書で返す"""
+    payouts_dict = {'race_id': race_id}
+    if not payouts_list:
+        return payouts_dict
+    current_type = None
+    for row in payouts_list:
+        try:
+            row = [cell.strip() for cell in row if cell.strip()] # 空セルを除去
+            if not row: continue
+
+            # 1列目が馬券種と判断できるか (例: 単勝, 複勝, 馬連...)
+            bet_type_jp = row[0]
+            is_bet_type = any(bt in bet_type_jp for bt in ['単勝', '複勝', '枠連', '馬連', 'ワイド', '馬単', '三連複', '三連単'])
+
+            if is_bet_type:
+                current_type = bet_type_jp
+                data_cells = row[1:]
+            elif current_type and len(row) >= 2: # 複勝/ワイドの2行目以降など
+                # 1列目が馬番、2列目が配当と仮定
+                bet_type_jp = current_type
+                data_cells = row
+            else:
+                # print(f"      デバッグ: 払い戻し不明行: {row}")
+                continue # 不明な行はスキップ
+
+            if not current_type: continue
+
+            # データセル数に応じて処理を分岐
+            if len(data_cells) >= 2: # 最低 馬番と配当がある
+                numbers = data_cells[0]
+                payout_yen = data_cells[1].replace(',', '')
+                ninki = data_cells[2] if len(data_cells) > 2 else None
+
+                payout_val = int(payout_yen) if payout_yen.isdigit() else None
+                if payout_val is None: continue
+
+                ninki_val = int(ninki) if ninki and ninki.isdigit() else None
+
+                # 辞書に格納 (複数行対応)
+                type_key = current_type # 日本語名をそのままキーにするか、英語名に変換するか
+                if type_key not in payouts_dict:
+                     payouts_dict[type_key] = {'馬番': [], '払戻金': [], '人気': []}
+
+                num_list = numbers.split('\n')
+                payouts_dict[type_key]['馬番'].extend(num_list)
+                # 払い戻しと人気は馬番の数に合わせる（通常は同じはず）
+                payouts_dict[type_key]['払戻金'].extend([payout_val] * len(num_list))
+                if ninki_val is not None:
+                    payouts_dict[type_key]['人気'].extend([ninki_val] * len(num_list))
+                else:
+                    payouts_dict[type_key]['人気'].extend([None] * len(num_list)) # ない場合はNone
+
+        except Exception as e_pay:
+             print(f"      警告: 払い戻しデータの処理中にエラー発生 ({race_id}): {e_pay} - Row: {row}")
+
+    # 整形: 複勝などで人気がNoneだけならリスト自体を削除
+    for key in list(payouts_dict.keys()):
+        if key != 'race_id' and '人気' in payouts_dict[key]:
+            if all(n is None for n in payouts_dict[key]['人気']):
+                del payouts_dict[key]['人気']
+
+    return payouts_dict
+
+
+# --- データ取得・結合・整形メイン関数 ---
+def scrape_and_process_race_data(race_id):
+    """指定されたrace_idの出馬表、結果、払い戻しを取得・整形して返す"""
+    print(f"    処理開始: {race_id}")
+
+    # 1. 出馬表取得 (Selenium)
+    shutuba_list = get_shutuba_table(race_id)
+    shutuba_df = format_shutuba_data(shutuba_list, race_id)
+
+    # 2. レース結果取得 (requests)
+    result_list = get_result_table(race_id)
+    result_df = format_result_data(result_list, race_id)
+
+    # 3. 払い戻し取得 (requests)
+    payout_list = get_pay_table(race_id)
+    payout_dict = format_payout_data(payout_list, race_id)
+
+    # 4. データの結合 (出馬表と結果)
+    combined_df = None
+    if shutuba_df is not None and result_df is not None:
+        try:
+             # Umaban を数値型にしてからマージ (文字列の場合を考慮)
+             shutuba_df['Umaban'] = pd.to_numeric(shutuba_df['Umaban'], errors='coerce')
+             result_df['Umaban'] = pd.to_numeric(result_df['Umaban'], errors='coerce')
+             # 不要列を削除してからマージ
+             cols_to_drop_from_shutuba = ['HorseName', 'SexAge', 'Load', 'JockeyName', 'TrainerName', 'race_id', 'Sex', 'Age'] # 結果とかぶる列
+             shutuba_df_merged = shutuba_df.drop(columns=cols_to_drop_from_shutuba, errors='ignore')
+
+             # マージ実行 ('inner' にすると結果と出馬表で頭数が違う場合に対応できるか？ 'left' が無難か)
+             combined_df = pd.merge(result_df, shutuba_df_merged, on='Umaban', how='left')
+             print(f"      結合完了: {combined_df.shape}")
+
+        except Exception as e_merge:
+             print(f"    エラー: 出馬表と結果の結合中にエラー ({race_id}): {e_merge}")
+             # 結合失敗時は結果データだけでも返す
+             combined_df = result_df
+             traceback.print_exc()
+
+    elif result_df is not None:
+        print("      情報: 結果データのみ取得しました。")
+        combined_df = result_df
+    elif shutuba_df is not None:
+         print("      情報: 出馬表データのみ取得しました。")
+         # 結果がない場合は出馬表を返すか、Noneにするか
+         # combined_df = shutuba_df # 必要なら
+         pass # ここでは結果がない場合はNoneのまま
+
+    print(f"    処理完了: {race_id}")
+    return combined_df, payout_dict
+
+
+# --- 期間指定データ収集メイン関数 ---
+def collect_race_data_for_period(start_year, start_month, end_year, end_month):
+    """指定された期間のレースデータを収集し、DataFrameと払い戻しリストを返す"""
+    all_combined_results_list = []
+    all_payouts_list = []
+    processed_race_ids = set()
+
+    # --- 処理済レースIDの読み込み ---
+    try:
+        if os.path.exists(PROCESSED_LOG_FILE):
+            with open(PROCESSED_LOG_FILE, "r") as f:
+                processed_race_ids = set(line.strip() for line in f)
+            print(f"処理済みレースIDを {len(processed_race_ids)} 件読み込みました。({PROCESSED_LOG_FILE})")
+    except Exception as e:
+        print(f"処理済みレースIDファイルの読み込みエラー: {e}")
+
+    current_year = start_year
+    current_month = start_month
+
+    while not (current_year > end_year or (current_year == end_year and current_month > end_month)):
+        month_str = f"{current_year}年{current_month}月"
+        print(f"\n--- {month_str} の処理を開始 ---")
+
+        kaisai_dates = get_kaisai_dates(current_year, current_month)
+        if not kaisai_dates:
+            print("  開催日が見つかりませんでした。")
+        else:
+            print(f"  開催日 ({len(kaisai_dates)}日): {', '.join(kaisai_dates)}")
+
+        for date_str in kaisai_dates:
+            print(f"  {date_str} のレースIDを取得中...")
+            race_ids_on_date = get_race_ids(date_str) # Selenium使用
+            if not race_ids_on_date:
+                 # get_race_ids内でメッセージ表示済み
+                 pass
+            else:
+                 print(f"    取得したレースID: {len(race_ids_on_date)}件")
+
+                 for race_id in race_ids_on_date:
+                     if race_id in processed_race_ids:
+                         continue
+
+                     # メインのデータ取得・整形処理
+                     combined_df, payout_dict = scrape_and_process_race_data(race_id)
+
+                     if combined_df is not None:
+                         all_combined_results_list.append(combined_df)
+
+                     if payout_dict and len(payout_dict) > 1:
+                         all_payouts_list.append(payout_dict)
+
+                     processed_race_ids.add(race_id)
+                     time.sleep(SLEEP_TIME_PER_RACE) # 微小な待機
+
+                     # --- 処理済レースIDの書き込み ---
+                     try:
+                         with open(PROCESSED_LOG_FILE, "a") as f:
+                             f.write(f"{race_id}\n")
+                     except Exception as e:
+                          print(f"処理済みレースIDファイルの書き込みエラー: {e}")
+
+
+        # 次の月へ
+        if current_month == 12:
+            current_month = 1
+            current_year += 1
+        else:
+            current_month += 1
+
+    print("\n--- 全期間のデータ収集完了 ---")
+
+    # データを結合
+    if not all_combined_results_list:
+        print("収集されたレース結果データがありません。")
+        final_combined_df = pd.DataFrame()
+    else:
+        try:
+             final_combined_df = pd.concat(all_combined_results_list, ignore_index=True)
+             print(f"最終的な結合レースデータ: {final_combined_df.shape}")
+        except Exception as e_concat:
+            print(f"エラー: 最終データの結合中にエラー: {e_concat}")
+            traceback.print_exc()
+            final_combined_df = pd.DataFrame()
+
+
+    return final_combined_df, all_payouts_list
+
+
+# --- 実行部分 ---
+if __name__ == '__main__':
+    print("="*60)
+    print(" Netkeiba データ収集スクリプト (v2)")
+    print("="*60)
+    print(f"取得対象期間: {TARGET_START_YEAR}年{TARGET_START_MONTH}月 ～ {TARGET_END_YEAR}年{TARGET_END_MONTH}月")
+    print(f"待機時間: {SLEEP_TIME_PER_PAGE} 秒 / ページアクセス")
+    print(f"User-Agent: {USER_AGENT}")
+    if CHROME_DRIVER_PATH: print(f"ChromeDriver: {CHROME_DRIVER_PATH}")
+    else: print("ChromeDriver: 環境変数PATHから検索")
+    print(f"データ保存先: {os.path.abspath(SAVE_DIRECTORY)}")
+    print(f"処理ログ: {os.path.abspath(PROCESSED_LOG_FILE)}")
+    print("--- 注意 ---")
+    print("・netkeiba.comの利用規約を遵守し、自己責任で実行してください。")
+    print("・サイトに負荷をかけないよう、アクセス間隔は適切に設定してください。")
+    print("・長時間実行する場合は、PCがスリープしないように設定してください。")
+    print("・ChromeDriverのセットアップが必要です(Selenium利用のため)。")
+    print("・サイト構造の変更により、スクリプトが動作しなくなる可能性があります。")
+    print("="*60)
+
+    start_time = time.time()
+
+    # --- データ収集実行 ---
+    final_combined_df, final_payouts_list = collect_race_data_for_period(
+        TARGET_START_YEAR, TARGET_START_MONTH, TARGET_END_YEAR, TARGET_END_MONTH
+    )
+
+    end_time = time.time()
+    duration_minutes = (end_time - start_time) / 60
+    print(f"\nデータ収集処理時間: {duration_minutes:.2f} 分 ({end_time - start_time:.2f} 秒)")
+
+    # --- 結果の確認と保存 ---
+    if final_combined_df is not None and not final_combined_df.empty:
+        print("\n--- 収集データサンプル (結合後) ---")
+        pd.set_option('display.max_columns', 30) # 表示列数を増やす
+        print(final_combined_df.head())
+        pd.reset_option('display.max_columns')
+        print("\n--- データ概要 (結合後) ---")
+        final_combined_df.info()
+
+        # --- ファイルに保存 ---
+        if not os.path.exists(SAVE_DIRECTORY):
+            try:
+                os.makedirs(SAVE_DIRECTORY)
+                print(f"\n保存先ディレクトリを作成しました: {SAVE_DIRECTORY}")
+            except Exception as e:
+                 print(f"\n保存先ディレクトリの作成に失敗しました: {e}")
+                 print("スクリプトと同じ場所に保存します。")
+                 SAVE_DIRECTORY = "."
+
+        period_str = f"{TARGET_START_YEAR}{TARGET_START_MONTH:02d}_{TARGET_END_YEAR}{TARGET_END_MONTH:02d}"
+        results_filename = os.path.join(SAVE_DIRECTORY, f"{SAVE_FILENAME_BASE}_combined_{period_str}.csv")
+        payouts_filename = os.path.join(SAVE_DIRECTORY, f"{SAVE_FILENAME_BASE}_payouts_{period_str}.json")
+
+        # 結果+出馬表データの保存 (CSV)
+        try:
+            final_combined_df.to_csv(results_filename, index=False, encoding='utf-8-sig')
+            print(f"\n結合データを '{results_filename}' に保存しました。")
+        except Exception as e:
+            print(f"\n結合CSV保存エラー: {e}")
+
+        # 払い戻しデータの保存 (JSON)
+        if final_payouts_list:
+             try:
+                 with open(payouts_filename, 'w', encoding='utf-8') as f:
+                     json.dump(final_payouts_list, f, indent=2, ensure_ascii=False)
+                 print(f"払い戻しデータを '{payouts_filename}' に保存しました。")
+             except Exception as e:
+                  print(f"\n払い戻しJSON保存エラー: {e}")
+        else:
+             print("払い戻しデータは収集されませんでした。")
+
+    else:
+        print("\n収集された結合データがないため、ファイルは保存されませんでした。")
+
+    print("\nスクリプトの実行が完了しました。")

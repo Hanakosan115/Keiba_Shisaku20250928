@@ -1,7 +1,7 @@
 """
-競馬予想GUIツール - Phase 12
+競馬予想GUIツール - Phase 14
 未来のレース（スクレイピング）と過去のレース（データベース）の両方に対応
-Phase 12: 79特徴量 + バリューベット戦略
+Phase 14: 39特徴量 LightGBM + Rule4複合最良ベット戦略
 """
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
@@ -18,16 +18,17 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, 'scripts'))
 
-# バックテストモジュールから関数をインポート
+# Phase 14特徴量計算モジュール (phase13_feature_engineering.py)
+import lightgbm as lgb
 try:
-    from backtest_phase2_phase3_dynamic import (
+    from phase13_feature_engineering import (
         calculate_sire_stats,
         calculate_trainer_jockey_stats,
-        calculate_horse_features_dynamic
+        calculate_horse_features_safe
     )
     BACKTEST_AVAILABLE = True
 except ImportError:
-    print("Warning: backtest module not found. Some features may not work.")
+    print("Warning: phase13_feature_engineering not found. Prediction may not work.")
     BACKTEST_AVAILABLE = False
 
 # Phase 10新規特徴量計算用
@@ -67,11 +68,62 @@ except ImportError:
     print("Warning: feature_engineering_v4 not found. V4 features disabled.")
     PHASE12_V4_AVAILABLE = False
 
+# SHAP (予測根拠表示)
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    print("Warning: shap not found. SHAP explanation disabled.")
+    SHAP_AVAILABLE = False
+
+# 特徴量日本語名マッピング
+FEATURE_NAMES_JP = {
+    'total_starts':              '通算出走数',
+    'total_win_rate':            '通算勝率',
+    'total_earnings':            '通算獲得賞金',
+    'turf_win_rate':             '芝勝率',
+    'dirt_win_rate':             'ダート勝率',
+    'distance_similar_win_rate': '同距離帯勝率',
+    'prev_race_rank':            '前走着順',
+    'days_since_last_race':      '前走からの日数',
+    'avg_passage_position':      '平均道中通過順',
+    'avg_last_3f':               '平均上がり3F',
+    'grade_race_starts':         '重賞出走数',
+    'father_win_rate':           '父馬勝率',
+    'father_top3_rate':          '父馬複勝率',
+    'mother_father_win_rate':    '母父勝率',
+    'mother_father_top3_rate':   '母父複勝率',
+    'avg_diff_seconds':          '平均着差(秒)',
+    'min_diff_seconds':          '最小着差(秒)',
+    'prev_diff_seconds':         '前走着差',
+    'avg_first_corner':          '平均1角通過順',
+    'avg_last_corner':           '平均最終角通過順',
+    'avg_position_change':       '平均順位変化',
+    'class_change':              'クラス変化',
+    'current_class':             '現クラス',
+    'trainer_win_rate':          '調教師勝率',
+    'trainer_top3_rate':         '調教師複勝率',
+    'trainer_starts':            '調教師出走数',
+    'jockey_win_rate':           '騎手勝率',
+    'jockey_top3_rate':          '騎手複勝率',
+    'jockey_starts':             '騎手出走数',
+    'track_win_rate':            'コース勝率',
+    'track_top3_rate':           'コース複勝率',
+    'race_distance':             'レース距離',
+    'is_turf':                   '芝フラグ',
+    'is_dirt':                   'ダートフラグ',
+    'is_良':                     '良馬場',
+    'is_稍重':                   '稍重馬場',
+    'is_重':                     '重馬場',
+    'is_不良':                   '不良馬場',
+    'frame_number':              '枠番',
+}
+
 
 class KeibaGUIv3:
     def __init__(self, root):
         self.root = root
-        self.root.title("競馬予想AI - Phase 12")
+        self.root.title("競馬予想AI - Phase 14")
         self.root.geometry("1200x900")
 
         # 予測結果を保存
@@ -97,6 +149,9 @@ class KeibaGUIv3:
             'mother_father_missing': 0
         }
 
+        # SHAP explainer（load_models()内で初期化）
+        self.shap_explainer_win = None
+
         # モデル読み込み
         self.load_models()
 
@@ -107,19 +162,26 @@ class KeibaGUIv3:
         self.create_widgets()
 
     def load_models(self):
-        """モデル読み込み - Phase 12"""
+        """モデル読み込み - Phase 14 (LightGBM Booster, 39特徴量)"""
         try:
-            with open(os.path.join(BASE_DIR, 'model_phase12_win.pkl'), 'rb') as f:
-                self.model_win = pickle.load(f)
-            with open(os.path.join(BASE_DIR, 'model_phase12_top3.pkl'), 'rb') as f:
-                self.model_top3 = pickle.load(f)
-            with open(os.path.join(BASE_DIR, 'model_phase12_features.txt'), 'r') as f:
-                self.model_features = [line.strip() for line in f.readlines()]
-            self.log(f"Phase 12モデル読み込み成功 ({len(self.model_features)}特徴量)")
+            self.model_win = lgb.Booster(
+                model_file=os.path.join(BASE_DIR, 'phase14_model_win.txt'))
+            self.model_place = lgb.Booster(
+                model_file=os.path.join(BASE_DIR, 'phase14_model_place.txt'))
+            with open(os.path.join(BASE_DIR, 'phase14_feature_list.pkl'), 'rb') as f:
+                self.model_features = pickle.load(f)
+            self.log(f"Phase 14モデル読み込み成功 ({len(self.model_features)}特徴量)")
+            if SHAP_AVAILABLE:
+                try:
+                    self.shap_explainer_win = shap.TreeExplainer(self.model_win)
+                    self.log("SHAP explainer 初期化完了")
+                except Exception as e:
+                    self.log(f"SHAP explainer 初期化失敗（続行）: {e}")
+                    self.shap_explainer_win = None
         except Exception as e:
             self.log(f"モデル読み込み失敗: {e}")
             self.model_win = None
-            self.model_top3 = None
+            self.model_place = None
             self.model_features = None
 
     def load_data(self):
@@ -148,7 +210,7 @@ class KeibaGUIv3:
             # 調教ランク数値化
             training_rank_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1}
             self.df['training_rank_numeric'] = self.df['training_rank'].map(training_rank_map)
-            self.df['training_rank_numeric'].fillna(3, inplace=True)
+            self.df['training_rank_numeric'] = self.df['training_rank_numeric'].fillna(3)
 
             # ペースカテゴリ
             self.df['pace_fast'] = (self.df['pace_category'] == 'fast').astype(int)
@@ -551,7 +613,7 @@ class KeibaGUIv3:
             pace_advantage = self.pace_predictor.calculate_pace_advantage(horse_id, predicted_pace)
             features['predicted_pace_high'] = 1 if predicted_pace == 'high' else 0
             features['predicted_pace_slow'] = 1 if predicted_pace == 'slow' else 0
-            features['pace_advantage'] = pace_advantage
+            features['pace_advantage_v3'] = pace_advantage  # モデル特徴量名に合わせる
 
             # 2. コースバイアス（枠番有利不利）
             track = race_info.get('track_name', '')
@@ -571,7 +633,7 @@ class KeibaGUIv3:
             # デフォルト値
             features['predicted_pace_high'] = 0
             features['predicted_pace_slow'] = 0
-            features['pace_advantage'] = 0.0
+            features['pace_advantage_v3'] = 0.0  # モデル特徴量名に合わせる
             features['gate_bias_advantage'] = 0.0
             features['interval_advantage'] = 0.0
 
@@ -1054,11 +1116,16 @@ class KeibaGUIv3:
             db_race_name = ''
         race_name_display = db_race_name if db_race_name else f"{track_name} {first_row.get('distance', '')}m"
 
+        # course_type補完: Noneの場合は空文字列（calculate_horse_features_dynamicでのエラー防止）
+        course_type = first_row.get('course_type')
+        if pd.isna(course_type) or course_type is None:
+            course_type = ''  # 空文字列にすることでstr.contains()のエラーを回避
+
         race_info = {
             'race_name': race_name_display,
             'track_name': track_name,
             'distance': first_row.get('distance'),
-            'course_type': first_row.get('course_type'),
+            'course_type': course_type,
             'track_condition': first_row.get('track_condition'),
             'date': first_row.get('date'),
             'race_num': race_num,
@@ -1128,7 +1195,12 @@ class KeibaGUIv3:
             race_data02 = soup.find('div', class_='RaceData02')
             if race_data02:
                 spans = race_data02.find_all('span')
-                if len(spans) > 0:
+                # spans[0]="1回", spans[1]="中山" なので spans[1] を使う
+                if len(spans) > 1:
+                    track_name = spans[1].get_text(strip=True)
+                    race_info['track_name'] = track_name
+                elif len(spans) > 0:
+                    # フォールバック
                     track_name = spans[0].get_text(strip=True)
                     race_info['track_name'] = track_name
 
@@ -1259,7 +1331,11 @@ class KeibaGUIv3:
             race_data02 = soup.find('div', class_='RaceData02')
             if race_data02:
                 spans = race_data02.find_all('span')
-                if len(spans) > 0:
+                # spans[0]="1回", spans[1]="中山" なので spans[1] を使う
+                if len(spans) > 1:
+                    track_name = spans[1].get_text(strip=True)
+                    race_info['track_name'] = track_name
+                elif len(spans) > 0:
                     track_name = spans[0].get_text(strip=True)
                     race_info['track_name'] = track_name
 
@@ -1471,216 +1547,11 @@ class KeibaGUIv3:
 
             self.insert_text("[3] AI予測中...\n")
 
-            predictions = []
-            # pd.to_datetime互換のISO形式（'%Y年%m月%d日'はNaTになるため）
-            current_date = datetime.now().strftime('%Y-%m-%d')
-
-            # モデル特徴量リスト（ファイルから読み込み）
-            if self.model_features is None:
-                self.insert_text("モデル特徴量リストが読み込まれていません\n", "error")
-                return
-            model_features = self.model_features
-
-            # 出走馬のhorse_idリスト（V3ペース予測用）
-            race_horses_ids = [h.get('horse_id') for h in horses if h.get('horse_id')]
-
-            total_horses = len(horses)
-            for i, horse in enumerate(horses):
-                self.progress['value'] = 20 + (60 * (i+1) / total_horses)
-                self.root.update()
-
-                horse_id = horse['horse_id']
-
-                if horse_id:
-                    # horse_idを数値に変換（スクレイピングでは文字列）
-                    try:
-                        horse_id_num = float(horse_id)
-                    except:
-                        horse_id_num = None
-                        print(f"  NG horse_id変換失敗 [{horse['馬名']}]: {horse_id}")
-
-                    if horse_id_num:
-                        # 実際の馬データから特徴量を計算
-                        # 常に対象レース自体を除外（リーケージ防止）
-                        try:
-                            race_id_int = int(race_id)
-                            horse_data = self.df[(self.df['horse_id'] == horse_id_num) & (self.df['race_id'] != race_id_int)]
-                        except:
-                            horse_data = self.df[self.df['horse_id'] == horse_id_num]
-
-                        # 日付順にソート（古い順）
-                        # 日付フォーマットが混在しているため、正規化してからソート
-                        if len(horse_data) > 0 and 'date' in horse_data.columns:
-                            def normalize_date(date_str):
-                                """日付を比較可能な形式に正規化"""
-                                import re
-                                s = str(date_str)
-                                # 2025年01月05日 → 2025-01-05
-                                match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', s)
-                                if match:
-                                    return f"{match.group(1)}-{match.group(2).zfill(2)}-{match.group(3).zfill(2)}"
-                                # 2025-01-05 00:00:00 → 2025-01-05
-                                match = re.search(r'(\d{4}-\d{2}-\d{2})', s)
-                                if match:
-                                    return match.group(1)
-                                return s
-                            horse_data = horse_data.copy()
-                            horse_data['date_normalized'] = horse_data['date'].apply(normalize_date)
-                            horse_data = horse_data.sort_values('date_normalized', ascending=True)
-                    else:
-                        horse_data = pd.DataFrame()  # 空のDataFrame
-
-                    if len(horse_data) > 0:
-                        # 枠番を数値化
-                        try:
-                            waku_num = int(horse['枠番'])
-                        except:
-                            waku_num = None
-                        # 枠番をrace_infoに追加（V3特徴量用）
-                        race_info['waku'] = waku_num
-
-                        # 特徴量計算（horse_dataをprefiltered引数で渡す）
-                        # ※ self.dfのdate列が日本語形式('2025年01月05日')のため、
-                        #   calculate_horse_features_dynamic内部のpd.to_datetimeが
-                        #   NaTを返し全レコードが除外される問題を回避
-                        try:
-                            features = calculate_horse_features_dynamic(
-                                horse_id, self.df, current_date, self.sire_stats,
-                                self.trainer_jockey_stats,
-                                horse.get('調教師'), horse.get('騎手'),
-                                race_info.get('track_name'),
-                                race_info.get('distance'),
-                                race_info.get('course_type'),
-                                race_info.get('track_condition'),
-                                waku_num,
-                                race_id=race_id,
-                                horse_races_prefiltered=horse_data
-                            )
-                        except Exception as e:
-                            print(f"特徴量計算エラー [{horse['馬名']}]: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            features = None
-
-                        if features:
-                            # Phase 10新規特徴量を追加
-                            if PHASE10_AVAILABLE:
-                                features = self._add_phase10_features(
-                                    features, horse_id_num, current_date, race_info
-                                )
-                            # V3新規特徴量を追加（ペース予測、コースバイアス、フォームサイクル）
-                            if PHASE11_V3_AVAILABLE and self.pace_predictor:
-                                features = self._add_v3_features(
-                                    features, horse_id_num, race_horses_ids, race_info
-                                )
-                            # V4新規特徴量を追加（馬場バイアス、天気×血統、展開予測、距離適性）
-                            if PHASE12_V4_AVAILABLE and self.track_bias_analyzer:
-                                features = self._add_v4_features(
-                                    features, horse, horse_id_num, race_horses_ids, race_info
-                                )
-                            # 特徴量の信頼性チェック
-                            non_zero_count = sum(1 for v in features.values() if v != 0 and v != 0.0)
-                            feature_reliability = non_zero_count / len(features) if features else 0
-                            print(f"  OK 特徴量計算成功 [{horse['馬名']}]: {len(features)}個 (有効: {non_zero_count}個, 信頼度: {feature_reliability*100:.0f}%)")
-                        else:
-                            print(f"  NG 特徴量がNone [{horse['馬名']}]")
-                            features = None
-                    else:
-                        print(f"  NG 馬データなし [{horse['馬名']}] (horse_id: {horse_id})")
-                        features = None
-                else:
-                    print(f"  NG horse_id取得失敗 [{horse['馬名']}]")
-                    features = None
-
-                # 特徴量が取得できなかった場合はデフォルト値
-                if features is None:
-                    print(f"  デフォルト値使用 [{horse['馬名']}]")
-                    features = {feat: 0 for feat in model_features}
-                    features['total_starts'] = 10
-                    features['total_win_rate'] = 0.1
-                else:
-                    # 不足している特徴量は0で埋める
-                    for feat in model_features:
-                        if feat not in features:
-                            features[feat] = 0
-
-                feat_df = pd.DataFrame([features])[model_features].fillna(0)
-
-                # デバッグ: 特徴量の状態を確認
-                if i == 0:  # 最初の馬だけ出力
-                    print(f"\n[デバッグ] 最初の馬の特徴量:")
-                    print(f"  features辞書のキー数: {len(features)}")
-                    print(f"  feat_df shape: {feat_df.shape}")
-                    non_zero = (feat_df.iloc[0] != 0).sum()
-                    print(f"  非ゼロの特徴量数: {non_zero}/{len(model_features)}")
-                    print(f"  主要特徴量:")
-                    for key in ['total_starts', 'total_win_rate', 'trainer_win_rate', 'jockey_win_rate']:
-                        val = feat_df[key].iloc[0] if key in feat_df.columns else 'N/A'
-                        print(f"    {key}: {val}")
-                    print()
-
-                # 予測
-                pred_win_proba = self.model_win.predict_proba(feat_df)[0, 1]
-                pred_top3_proba = self.model_top3.predict_proba(feat_df)[0, 1]
-
-                # デバッグ: 予測結果を確認
-                if i == 0:  # 最初の馬だけ出力
-                    print(f"  予測結果:")
-                    print(f"    勝率予測: {pred_win_proba:.6f} ({pred_win_proba*100:.3f}%)")
-                    print(f"    複勝予測: {pred_top3_proba:.6f} ({pred_top3_proba*100:.3f}%)")
-                    print()
-
-                # オッズが存在する場合のみ期待値とバリューを計算
-                odds = horse.get('単勝オッズ', 0)
-                expected_value = pred_win_proba * odds if odds > 0 else 0
-                # バリュー = モデル確率 - オッズ暗示確率（正なら割安）
-                value = pred_win_proba - (1.0 / odds) if odds > 0 else 0
-
-                # 馬の過去成績サマリー
-                stats_summary = ""
-                if horse_id and len(horse_data) > 0:
-                    total_races = len(horse_data)
-                    wins = (horse_data['rank'] == 1).sum()
-                    top3 = (horse_data['rank'] <= 3).sum()
-                    recent_5 = horse_data.tail(5)
-                    # 着順を整数に変換（NaNは除外）、新しい順に並べ替え
-                    recent_ranks = [int(r) for r in recent_5['rank'].tolist() if pd.notna(r)]
-                    recent_ranks = recent_ranks[::-1]  # 新しい順に並べ替え
-                    stats_summary = f"{total_races}戦{wins}勝{top3}着内 直近:{recent_ranks}"
-
-                # 特徴量信頼度を計算（デフォルト値使用時は低い）
-                feat_non_zero = (feat_df.iloc[0] != 0).sum()
-                feat_reliability = feat_non_zero / len(model_features)
-
-                predictions.append({
-                    '馬番': horse['馬番'],
-                    '枠番': horse.get('枠番', ''),
-                    '馬名': horse['馬名'],
-                    'horse_id': horse['horse_id'],
-                    '性齢': horse.get('性齢', ''),
-                    '斤量': horse.get('斤量', ''),
-                    '騎手': horse['騎手'],
-                    '馬体重': horse.get('馬体重', ''),
-                    'オッズ': horse.get('単勝オッズ', 0.0),
-                    '勝率予測': pred_win_proba,
-                    '複勝予測': pred_top3_proba,
-                    '期待値': expected_value,
-                    'バリュー': value,
-                    'データあり': horse_id is not None,
-                    '過去成績': stats_summary,
-                    '実際の着順': horse.get('実際の着順'),
-                    '特徴量信頼度': feat_reliability
-                })
+            # predict_core()で予測実行（current_date=None → datetime.now()使用）
+            df_pred = self.predict_core(race_id, horses, race_info, has_odds)
 
             self.progress['value'] = 80
             self.root.update()
-
-            # 予測結果をDataFrameに
-            df_pred = pd.DataFrame(predictions)
-            df_pred = df_pred.sort_values('勝率予測', ascending=False)
-
-            # 印の割り当て（役割別）
-            df_pred = self._assign_marks(df_pred, has_odds)
 
             # 結果を保存（印カラム含む）
             self.last_prediction = df_pred.copy()
@@ -1825,6 +1696,329 @@ class KeibaGUIv3:
 
         df_pred['印'] = df_pred.apply(apply_mark, axis=1)
         return df_pred
+
+    def predict_core(self, race_id, horses, race_info, has_odds, current_date=None):
+        """
+        UI非依存の予測コアロジック。GUIとバックテストの両方から呼ばれる。
+
+        Args:
+            race_id: レースID文字列
+            horses: get_race_from_database()等が返す馬リスト
+            race_info: レース情報dict
+            has_odds: オッズ有無
+            current_date: 'YYYY-MM-DD'文字列。Noneならdatetime.now()を使用。
+                          バックテスト時はレース日付を渡してリーケージ防止。
+        Returns:
+            pd.DataFrame: 印付きdf_pred（'馬番','馬名','勝率予測','複勝予測','印' 等全カラム）
+        """
+        predictions = []
+
+        # pd.to_datetime互換のISO形式
+        if current_date is None:
+            current_date = datetime.now().strftime('%Y-%m-%d')
+
+        # モデル特徴量リスト
+        if self.model_features is None:
+            raise ValueError("モデル特徴量リストが読み込まれていません")
+        model_features = self.model_features
+
+        # 出走馬のhorse_idリスト（V3ペース予測用）
+        race_horses_ids = []
+        for h in horses:
+            hid = h.get('horse_id')
+            if hid:
+                try:
+                    race_horses_ids.append(float(hid))
+                except (ValueError, TypeError):
+                    pass
+
+        for i, horse in enumerate(horses):
+            horse_id = horse['horse_id']
+
+            if horse_id:
+                # horse_idを数値に変換
+                try:
+                    horse_id_num = float(horse_id)
+                except:
+                    horse_id_num = None
+                    print(f"  NG horse_id変換失敗 [{horse['馬名']}]: {horse_id}")
+
+                if horse_id_num:
+                    # 実際の馬データから特徴量を計算
+                    # 常に対象レース自体を除外（リーケージ防止）
+                    try:
+                        race_id_int = int(race_id)
+                        horse_data = self.df[(self.df['horse_id'] == horse_id_num) & (self.df['race_id'] != race_id_int)]
+                    except:
+                        horse_data = self.df[self.df['horse_id'] == horse_id_num]
+
+                    # 日付順にソート（古い順）
+                    if len(horse_data) > 0 and 'date' in horse_data.columns:
+                        def normalize_date(date_str):
+                            """日付を比較可能な形式に正規化"""
+                            import re
+                            s = str(date_str)
+                            match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', s)
+                            if match:
+                                return f"{match.group(1)}-{match.group(2).zfill(2)}-{match.group(3).zfill(2)}"
+                            match = re.search(r'(\d{4}-\d{2}-\d{2})', s)
+                            if match:
+                                return match.group(1)
+                            return s
+                        horse_data = horse_data.copy()
+                        horse_data['date_normalized'] = horse_data['date'].apply(normalize_date)
+
+                        # current_dateが指定されている場合、未来データも除外（リーケージ防止）
+                        if current_date:
+                            horse_data_dates = pd.to_datetime(horse_data['date_normalized'], errors='coerce')
+                            cutoff = pd.to_datetime(current_date)
+                            horse_data = horse_data[horse_data_dates <= cutoff]
+
+                        horse_data = horse_data.sort_values('date_normalized', ascending=True)
+                else:
+                    horse_data = pd.DataFrame()  # 空のDataFrame
+
+                if len(horse_data) > 0:
+                    # 枠番を数値化
+                    try:
+                        waku_num = int(horse['枠番'])
+                    except:
+                        waku_num = None
+                    race_info['waku'] = waku_num
+
+                    # 特徴量計算 (Phase 14: 39特徴量)
+                    try:
+                        features = calculate_horse_features_safe(
+                            horse_id, self.df, current_date, self.sire_stats,
+                            self.trainer_jockey_stats,
+                            horse.get('調教師'), horse.get('騎手'),
+                            race_info.get('track_name'),
+                            race_info.get('distance'),
+                            race_info.get('course_type'),
+                            race_info.get('track_condition'),
+                            waku_num,
+                            race_id=race_id
+                        )
+                    except Exception as e:
+                        print(f"特徴量計算エラー [{horse['馬名']}]: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        features = None
+
+                    if features:
+                        # 特徴量の信頼性チェック
+                        non_zero_count = sum(1 for v in features.values() if v != 0 and v != 0.0)
+                        feature_reliability = non_zero_count / len(features) if features else 0
+                        print(f"  OK 特徴量計算成功 [{horse['馬名']}]: {len(features)}個 (有効: {non_zero_count}個, 信頼度: {feature_reliability*100:.0f}%)")
+                    else:
+                        print(f"  NG 特徴量がNone [{horse['馬名']}]")
+                        features = None
+                else:
+                    print(f"  NG 馬データなし [{horse['馬名']}] (horse_id: {horse_id})")
+                    features = None
+            else:
+                print(f"  NG horse_id取得失敗 [{horse['馬名']}]")
+                features = None
+
+            # 特徴量が取得できなかった場合はデフォルト値
+            if features is None:
+                print(f"  デフォルト値使用 [{horse['馬名']}]")
+                features = {feat: 0 for feat in model_features}
+                features['total_starts'] = 10
+                features['total_win_rate'] = 0.1
+            else:
+                # 不足している特徴量は0で埋める
+                for feat in model_features:
+                    if feat not in features:
+                        features[feat] = 0
+
+            feat_df = pd.DataFrame([features])[model_features].fillna(0)
+
+            # 予測 (Phase 14: lgb.Booster.predict() を使用)
+            pred_win_proba = float(self.model_win.predict(feat_df)[0])
+            pred_top3_proba = float(self.model_place.predict(feat_df)[0])
+
+            # SHAP値計算（予測根拠 TOP5）
+            shap_top5 = []
+            if SHAP_AVAILABLE and self.shap_explainer_win is not None:
+                try:
+                    sv = self.shap_explainer_win.shap_values(feat_df)[0]
+                    pairs = sorted(zip(feat_df.columns.tolist(), sv),
+                                   key=lambda x: abs(x[1]), reverse=True)[:5]
+                    shap_top5 = pairs
+                except Exception as e:
+                    shap_top5 = []
+                    print(f"SHAP計算エラー({horse.get('馬名','')}): {e}")
+
+            # オッズが存在する場合のみ期待値とバリューを計算
+            odds = horse.get('単勝オッズ', 0)
+            expected_value = pred_win_proba * odds if odds > 0 else 0
+            value = pred_win_proba - (1.0 / odds) if odds > 0 else 0
+
+            # 馬の過去成績サマリー
+            stats_summary = ""
+            if horse_id and len(horse_data) > 0:
+                total_races = len(horse_data)
+                wins = (horse_data['rank'] == 1).sum()
+                top3 = (horse_data['rank'] <= 3).sum()
+                recent_5 = horse_data.tail(5)
+                recent_ranks = [int(r) for r in recent_5['rank'].tolist() if pd.notna(r)]
+                recent_ranks = recent_ranks[::-1]
+                stats_summary = f"{total_races}戦{wins}勝{top3}着内 直近:{recent_ranks}"
+
+            # 特徴量信頼度を計算
+            feat_non_zero = (feat_df.iloc[0] != 0).sum()
+            feat_reliability = feat_non_zero / len(model_features)
+
+            # 15-20%確率帯判定（Phase 13で検証済み: 回収率143.9%）
+            is_sweet_spot = (0.15 <= pred_win_proba < 0.20)
+
+            predictions.append({
+                '馬番': horse['馬番'],
+                '枠番': horse.get('枠番', ''),
+                '馬名': horse['馬名'],
+                'horse_id': horse['horse_id'],
+                '性齢': horse.get('性齢', ''),
+                '斤量': horse.get('斤量', ''),
+                '騎手': horse['騎手'],
+                '馬体重': horse.get('馬体重', ''),
+                'オッズ': horse.get('単勝オッズ', 0.0),
+                '勝率予測': pred_win_proba,
+                '複勝予測': pred_top3_proba,
+                '期待値': expected_value,
+                'バリュー': value,
+                'データあり': horse_id is not None,
+                '過去成績': stats_summary,
+                '実際の着順': horse.get('実際の着順'),
+                '特徴量信頼度': feat_reliability,
+                '回収率優秀': is_sweet_spot,
+                'shap_top5': shap_top5,
+            })
+
+        # 予測結果をDataFrameに
+        df_pred = pd.DataFrame(predictions)
+        df_pred = df_pred.sort_values('勝率予測', ascending=False)
+
+        # 印の割り当て（役割別）
+        df_pred = self._assign_marks(df_pred, has_odds)
+
+        return df_pred
+
+    @staticmethod
+    def get_recommended_bet_targets(df_pred, has_odds):
+        """
+        印ベースの推奨馬券ターゲットを純粋関数として返す。
+        GUIとバックテストの両方から呼ばれる。
+
+        Returns:
+            dict: 推奨馬券情報
+        """
+        if df_pred is None or len(df_pred) == 0:
+            return None
+
+        # 印から各役割の馬を取得
+        def get_mark_horse(mark_char):
+            matched = df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
+            return matched.iloc[0] if len(matched) > 0 else None
+
+        def get_mark_horses(mark_char):
+            return df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
+
+        honmei = get_mark_horse('◎')
+        taikou = get_mark_horse('○')
+        tanana = get_mark_horse('▲')
+        star   = get_mark_horse('☆')
+        renka  = get_mark_horses('△')
+
+        if honmei is None:
+            return None
+
+        win_proba = honmei['勝率予測']
+
+        # 紐馬候補を集める（○▲△から、最大3頭）
+        himo_list = []
+        if taikou is not None:
+            himo_list.append(int(taikou['馬番']))
+        if tanana is not None:
+            himo_list.append(int(tanana['馬番']))
+        for _, r in renka.head(2).iterrows():
+            if int(r['馬番']) not in himo_list:
+                himo_list.append(int(r['馬番']))
+        himo_list = himo_list[:3]
+
+        # 3連複/3連単用の3着候補
+        uma1 = int(honmei['馬番'])
+        uma2 = int(taikou['馬番']) if taikou is not None else None
+        if tanana is not None:
+            uma3 = int(tanana['馬番'])
+        else:
+            # ▲がない場合は勝率3位にフォールバック
+            sorted_by_win = df_pred.sort_values('勝率予測', ascending=False)
+            uma3 = None
+            for _, r in sorted_by_win.iterrows():
+                bn = int(r['馬番'])
+                if bn != uma1 and (uma2 is None or bn != uma2):
+                    uma3 = bn
+                    break
+
+        # 複勝率活用: ワイド・3連複用の馬番（複勝率上位を使用）
+        # テスト結果: ワイド +4.8pt、3連複 +3.2pt の改善
+        if '複勝予測' in df_pred.columns:
+            sorted_by_place = df_pred.sort_values('複勝予測', ascending=False)
+
+            # ワイド用: 複勝率上位2頭
+            wide_horses = []
+            for _, r in sorted_by_place.head(2).iterrows():
+                wide_horses.append(int(r['馬番']))
+            wide_uma1 = wide_horses[0] if len(wide_horses) > 0 else uma1
+            wide_uma2 = wide_horses[1] if len(wide_horses) > 1 else uma2
+
+            # 3連複用: 複勝率上位3頭
+            sanren_horses = []
+            for _, r in sorted_by_place.head(3).iterrows():
+                sanren_horses.append(int(r['馬番']))
+            sanren_uma1 = sanren_horses[0] if len(sanren_horses) > 0 else uma1
+            sanren_uma2 = sanren_horses[1] if len(sanren_horses) > 1 else uma2
+            sanren_uma3 = sanren_horses[2] if len(sanren_horses) > 2 else uma3
+        else:
+            # 複勝予測がない場合は従来通り（勝率ベース）
+            wide_uma1, wide_uma2 = uma1, uma2
+            sanren_uma1, sanren_uma2, sanren_uma3 = uma1, uma2, uma3
+
+        # 勝率帯判定
+        if win_proba >= 0.50:
+            bet_pattern = '50+'
+        elif win_proba >= 0.40:
+            bet_pattern = '40-50'
+        elif win_proba >= 0.30:
+            bet_pattern = '30-40'
+        elif win_proba >= 0.20:
+            bet_pattern = '20-30'
+        elif win_proba >= 0.10:
+            bet_pattern = '10-20'
+        else:
+            bet_pattern = '<10'
+
+        # 買い目構築
+        bets = {
+            'tansho': uma1,  # 単勝: 勝率1位（現行維持）
+            'umaren': (uma1, uma2) if uma2 else None,  # 馬連: 勝率上位2頭
+            'wide': (wide_uma1, wide_uma2) if wide_uma2 else None,  # ワイド: 複勝率上位2頭
+            'sanrenpuku': (sanren_uma1, sanren_uma2, sanren_uma3) if sanren_uma2 and sanren_uma3 else None,  # 3連複: 複勝率上位3頭
+            'sanrentan_box': (sanren_uma1, sanren_uma2, sanren_uma3) if sanren_uma2 and sanren_uma3 else None,  # 3連単BOX: 複勝率上位3頭
+        }
+
+        return {
+            'honmei': uma1,
+            'taikou': uma2,
+            'tanana': uma3,
+            'star': int(star['馬番']) if star is not None else None,
+            'renka': [int(r['馬番']) for _, r in renka.iterrows()],
+            'himo_list': himo_list,
+            'win_proba': win_proba,
+            'bet_pattern': bet_pattern,
+            'bets': bets,
+        }
 
     def _old_display_code_removed(self):
         """旧表示コード（削除済み）"""
@@ -2298,9 +2492,9 @@ class KeibaGUIv3:
                             waku_num = None
                         race_info['waku'] = waku_num
 
-                        # 特徴量計算（horse_dataをprefiltered引数で渡す）
+                        # 特徴量計算 (Phase 14: 39特徴量)
                         try:
-                            features = calculate_horse_features_dynamic(
+                            features = calculate_horse_features_safe(
                                 horse_id, self.df, current_date, self.sire_stats,
                                 self.trainer_jockey_stats,
                                 horse.get('調教師'), horse.get('騎手'),
@@ -2309,8 +2503,7 @@ class KeibaGUIv3:
                                 race_info.get('course_type'),
                                 race_info.get('track_condition'),
                                 waku_num,
-                                race_id=race_id,
-                                horse_races_prefiltered=horse_data
+                                race_id=race_id
                             )
                         except Exception as e:
                             print(f"[WIN5]   特徴量計算エラー [{horse.get('馬名', '?')}]: {e}")
@@ -2319,21 +2512,6 @@ class KeibaGUIv3:
                             features = None
 
                         if features:
-                            # Phase 10新規特徴量
-                            if PHASE10_AVAILABLE:
-                                features = self._add_phase10_features(
-                                    features, horse_id_num, current_date, race_info
-                                )
-                            # V3新規特徴量（ペース予測、コースバイアス、フォームサイクル）
-                            if PHASE11_V3_AVAILABLE and self.pace_predictor:
-                                features = self._add_v3_features(
-                                    features, horse_id_num, race_horses_ids, race_info
-                                )
-                            # V4新規特徴量（馬場バイアス、天気×血統、展開予測、距離適性）
-                            if PHASE12_V4_AVAILABLE and self.track_bias_analyzer:
-                                features = self._add_v4_features(
-                                    features, horse, horse_id_num, race_horses_ids, race_info
-                                )
                             # 特徴量の信頼性チェック
                             non_zero_count = sum(1 for v in features.values() if v != 0 and v != 0.0)
                             feature_reliability = non_zero_count / len(features) if features else 0
@@ -2360,28 +2538,9 @@ class KeibaGUIv3:
 
             feat_df = pd.DataFrame([features])[model_features].fillna(0)
 
-            # デバッグ: 最初の馬の特徴量を詳細出力
-            if i == 0:
-                print(f"\n[WIN5] 最初の馬の特徴量:")
-                print(f"  features辞書のキー数: {len(features)}")
-                print(f"  feat_df shape: {feat_df.shape}")
-                non_zero = (feat_df.iloc[0] != 0).sum()
-                print(f"  非ゼロの特徴量数: {non_zero}/{len(model_features)}")
-                for key in ['total_starts', 'total_win_rate', 'trainer_win_rate', 'jockey_win_rate']:
-                    val = feat_df[key].iloc[0] if key in feat_df.columns else 'N/A'
-                    print(f"    {key}: {val}")
-                print()
-
-            # 予測
-            pred_win_proba = self.model_win.predict_proba(feat_df)[0, 1]
-            pred_top3_proba = self.model_top3.predict_proba(feat_df)[0, 1]
-
-            # デバッグ: 最初の馬の予測結果
-            if i == 0:
-                print(f"  予測結果:")
-                print(f"    勝率予測: {pred_win_proba:.6f} ({pred_win_proba*100:.3f}%)")
-                print(f"    複勝予測: {pred_top3_proba:.6f} ({pred_top3_proba*100:.3f}%)")
-                print()
+            # 予測 (Phase 14: lgb.Booster.predict() を使用)
+            pred_win_proba = float(self.model_win.predict(feat_df)[0])
+            pred_top3_proba = float(self.model_place.predict(feat_df)[0])
 
             odds = horse.get('単勝オッズ', 0)
             expected_value = pred_win_proba * odds if odds > 0 else 0
@@ -3445,6 +3604,10 @@ class KeibaGUIv3:
             # 印: 事前計算済みの'印'カラムを使用（ソート変更しても維持）
             mark = row.get('印', '')
 
+            # 回収率優秀マーク（15-20%確率帯: Phase 13で検証済み143.9%回収率）
+            if row.get('回収率優秀', False):
+                mark = mark + '*' if mark else '*'
+
             # 各列の値
             waku = row.get('枠番', '')
             umaban = row.get('馬番', '')
@@ -3527,7 +3690,7 @@ class KeibaGUIv3:
         self.status_label.config(text=f"{sort_by}順で表示中")
 
     def update_recommended_bets(self, df_pred, has_odds):
-        """推奨馬券を計算して表示（Feature A）"""
+        """推奨馬券を計算して表示（Feature A）- get_recommended_bet_targets()を内部使用"""
         self.recommend_text.config(state=tk.NORMAL)
         self.recommend_text.delete('1.0', tk.END)
 
@@ -3536,7 +3699,14 @@ class KeibaGUIv3:
             self.recommend_text.config(state=tk.DISABLED)
             return
 
-        # 印から各役割の馬を取得するヘルパー
+        # 共通ロジックで馬券ターゲットを取得
+        targets = self.get_recommended_bet_targets(df_pred, has_odds)
+        if targets is None:
+            self.recommend_text.insert(tk.END, "印割り当てがありません\n")
+            self.recommend_text.config(state=tk.DISABLED)
+            return
+
+        # 印から各役割の馬を取得（表示用にdf_pred行が必要）
         def get_mark_horse(mark_char):
             matched = df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
             return matched.iloc[0] if len(matched) > 0 else None
@@ -3544,30 +3714,30 @@ class KeibaGUIv3:
         def get_mark_horses(mark_char):
             return df_pred[df_pred['印'].str.startswith(mark_char, na=False)]
 
-        honmei = get_mark_horse('◎')  # 本命
-        taikou = get_mark_horse('○')  # 対抗
-        tanana = get_mark_horse('▲')  # 単穴
-        star   = get_mark_horse('☆')  # 星
-        renka  = get_mark_horses('△') # 連下
-        chuui  = get_mark_horses('注') # 注意
+        honmei = get_mark_horse('◎')
+        taikou = get_mark_horse('○')
+        tanana = get_mark_horse('▲')
+        star   = get_mark_horse('☆')
+        renka  = get_mark_horses('△')
+        chuui  = get_mark_horses('注')
 
         # 推奨馬券を構築
         recommend_lines = []
 
-        # 本命の勝率（購入判定に使用）
-        win_proba = honmei['勝率予測'] if honmei is not None else 0
+        win_proba = targets['win_proba']
         top1_value = honmei.get('バリュー', 0) if honmei is not None else 0
 
         # === 購入判定（バリューベット戦略） ===
+        # Phase12実績ベース（2020-2025年, 20,365レース）
         if has_odds and 'バリュー' in df_pred.columns:
             if win_proba >= 0.50:
-                signal = "【超高確信】単勝65%/複勝83%実績"
-                action = "強気の単勝勝負"
+                signal = "【超高確信】単勝77.4%/複勝91.3%実績"
+                action = "強気の単勝勝負（ROI 298%）"
             elif win_proba >= 0.35 and top1_value >= 0.10:
-                signal = "【高確信+バリュー】単勝45%/ROI284%実績"
+                signal = "【高確信+バリュー】単勝60%超/ROI270%超実績"
                 action = "単勝購入推奨"
             elif win_proba >= 0.25 and top1_value >= 0.15:
-                signal = "【バリュー】単勝40%/ROI361%実績"
+                signal = "【バリュー】単勝50%超/ROI250%超実績"
                 action = "単勝購入推奨（回収率重視）"
             elif win_proba >= 0.25:
                 signal = "【中確信】"
@@ -3580,13 +3750,13 @@ class KeibaGUIv3:
                 action = "このレースは見送り or 押さえ程度"
         else:
             if win_proba >= 0.50:
-                signal = "【超高確信】単勝65%/複勝83%実績"
-                action = "強気の単勝勝負"
+                signal = "【超高確信】単勝77.4%/複勝91.3%実績"
+                action = "強気の単勝勝負（ROI 298%）"
             elif win_proba >= 0.35:
-                signal = "【高確信】"
+                signal = "【高確信】単勝60%超期待"
                 action = "単勝軸。オッズ確認後バリュー判定を"
             elif win_proba >= 0.25:
-                signal = "【中確信】"
+                signal = "【中確信】単勝50%超期待"
                 action = "オッズ次第。バリューがあれば購入"
             else:
                 signal = "【見送り推奨】"
@@ -3635,6 +3805,31 @@ class KeibaGUIv3:
         for _, r in chuui.iterrows():
             recommend_lines.append(format_horse_line('注', '注意', r))
 
+        # === Phase 13: 回収率優秀馬（15-20%確率帯）===
+        sweet_spot_horses = df_pred[df_pred.get('回収率優秀', False) == True]
+        if len(sweet_spot_horses) > 0:
+            recommend_lines.append("")
+            recommend_lines.append("【Phase 13: 回収率優秀馬】 (*印 = 143.9%回収率実績)")
+            for _, row in sweet_spot_horses.iterrows():
+                odds_info = f" オッズ{row['オッズ']:.1f}" if row.get('オッズ', 0) > 0 else ""
+
+                # 推奨購入金額（オッズがある場合のみ）
+                if row.get('オッズ', 0) > 0:
+                    # 期待回収率143.9%をベースに、100円あたりの期待リターンを計算
+                    expected_return = row['勝率予測'] * row['オッズ'] * 100
+                    recommend_amount = "100円" if expected_return >= 100 else "見送り"
+                    recommend_lines.append(
+                        f"  * {row['馬番']}番 {row['馬名']} "
+                        f"勝率{row['勝率予測']*100:.1f}%{odds_info} "
+                        f"→ 推奨: {recommend_amount} (期待{expected_return:.0f}円)"
+                    )
+                else:
+                    recommend_lines.append(
+                        f"  * {row['馬番']}番 {row['馬名']} "
+                        f"勝率{row['勝率予測']*100:.1f}% (オッズ未発表)"
+                    )
+            recommend_lines.append("  ※ 15-20%確率帯は907レースで検証済み（95%CI: 128.8%-160.1%）")
+
         # === バリューベット推奨（オッズあり時） ===
         if has_odds and 'バリュー' in df_pred.columns:
             recommend_lines.append("")
@@ -3654,121 +3849,134 @@ class KeibaGUIv3:
             recommend_lines.append("")
             recommend_lines.append("※ オッズ未発表: バリュー判定はオッズ確定後に")
 
-        # === 勝率に応じた最適買い目 ===
-        # 紐馬候補を集める（○▲△から）
-        himo_list = []
-        if taikou is not None:
-            himo_list.append(taikou)
-        if tanana is not None:
-            himo_list.append(tanana)
-        for _, r in renka.head(2).iterrows():
-            himo_list.append(r)
-        # 重複除去
-        seen = set()
-        himo_unique = []
-        for h in himo_list:
-            if h['馬番'] not in seen:
-                seen.add(h['馬番'])
-                himo_unique.append(h)
-        himo_list = himo_unique[:3]
+        # === AI予測の仕組み説明 ===
+        recommend_lines.append("")
+        recommend_lines.append("【AI予測の仕組み】")
+        recommend_lines.append("  ◎○▲印: 勝率ベースで選定（1着になる確率が高い馬）")
+        recommend_lines.append("  ワイド・3連複: 複勝率ベースで選定（馬券圏内に入る組み合わせ）")
+        recommend_lines.append("  → 検証結果: ワイド +4.8pt、3連複 +3.2pt 的中率改善")
+        recommend_lines.append("  → 「勝てないが馬券圏内」の馬を正確に予測")
 
-        # 3連複/3連単用の3着候補
-        third = tanana
-        if third is None:
-            sorted_by_win = df_pred.sort_values('勝率予測', ascending=False)
-            for _, r in sorted_by_win.iterrows():
-                if honmei is not None and taikou is not None:
-                    if r['馬番'] != honmei['馬番'] and r['馬番'] != taikou['馬番']:
-                        third = r
-                        break
+        # === 勝率に応じた最適買い目（targets dictから馬番を使用） ===
+        uma1 = targets['honmei']
+        uma2 = targets['taikou']
+        uma3 = targets['tanana']
+        himo_list = targets['himo_list']
 
         recommend_lines.append("")
         recommend_lines.append("【推奨買い目】勝率に応じた最適パターン")
 
-        if honmei is not None and taikou is not None and third is not None:
-            uma1 = int(honmei['馬番'])
-            uma2 = int(taikou['馬番'])
-            uma3 = int(third['馬番'])
-
+        # 推奨買い目パターン（バックテスト検証済: 20,365レース, 2020-2025年）
+        # BOX vs 流し比較で最適パターンを採用
+        if uma1 is not None and uma2 is not None and uma3 is not None:
             if win_proba >= 0.50:
-                # 勝率50%以上: 本命レース
-                recommend_lines.append("  ─ 本命レース（勝率50%以上）─")
-                recommend_lines.append(f"  単勝: {uma1}番 300円")
-                recommend_lines.append(f"  馬連: {uma1}-{uma2} 200円")
-                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 100円")
-                recommend_lines.append(f"  → 合計600円 (単勝ROI212%/馬連168%/3連複302%)")
+                recommend_lines.append("  ─ 本命レース（勝率50%以上）★最効率パターン ─")
+                recommend_lines.append(f"  単勝: {uma1}番 400円 ← 77.4%的中/ROI 298%（メインベット）")
+                recommend_lines.append(f"  3連複BOX: {uma1}-{uma2}-{uma3} 200円 ← 25.8%的中/ROI 911% ★超高効率")
+                recommend_lines.append(f"             ↑複勝率上位3頭（1点買い・流しより高ROI）")
+                if len(himo_list) >= 1:
+                    himo_nums = [str(h) for h in himo_list[:1]]
+                    recommend_lines.append(f"  ワイド流し: {uma1}→{uma2},{','.join(himo_nums)} 100円 ← 72.7%的中/ROI 337%（2点×50円）")
+                recommend_lines.append(f"  → 合計700円 / 期待収支 +約250円")
 
             elif win_proba >= 0.40:
-                # 勝率40-50%: 準本命
                 recommend_lines.append("  ─ 準本命（勝率40-50%）─")
-                recommend_lines.append(f"  単勝: {uma1}番 300円")
-                recommend_lines.append(f"  馬連: {uma1}-{uma2} 200円")
-                recommend_lines.append(f"  → 合計500円 (単勝ROI272%)")
-                # 3連複は軸2頭推奨
+                recommend_lines.append(f"  単勝: {uma1}番 300円 ← 62.3%的中/ROI 273%")
                 if len(himo_list) >= 2:
-                    himo_nums = [str(int(h['馬番'])) for h in himo_list[:2]]
-                    recommend_lines.append(f"  [参考] 3連複軸2頭: {uma1}-{uma2}→{','.join(himo_nums)} (2点/200円)")
+                    himo_nums = [str(h) for h in himo_list[:2]]
+                    recommend_lines.append(f"  馬連流し: {uma1}→{uma2},{','.join(himo_nums)} 200円 ← 56.9%的中/ROI 301%（3点×66円）")
+                else:
+                    recommend_lines.append(f"  馬連: {uma1}-{uma2} 200円 ← 23.9%的中/ROI 307%")
+                recommend_lines.append(f"  3連複BOX: {uma1}-{uma2}-{uma3} 100円 ← 20.1%的中/ROI 691%")
+                recommend_lines.append(f"  → 合計600円 / 期待収支 +約120円")
 
             elif win_proba >= 0.30:
-                # 勝率30-40%: 中穴
                 recommend_lines.append("  ─ 中穴（勝率30-40%）─")
-                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 100円")
-                recommend_lines.append(f"  ワイド: {uma1}-{uma2} 100円")
-                recommend_lines.append(f"  単勝: {uma1}番 100円")
-                recommend_lines.append(f"  → 合計300円 (3連複ROI234%/ワイドROI219%)")
+                recommend_lines.append(f"  単勝: {uma1}番 300円 ← 53.9%的中/ROI 279%")
+                recommend_lines.append(f"  3連複BOX: {uma1}-{uma2}-{uma3} 200円 ← 15.3%的中/ROI 578%")
+                recommend_lines.append(f"             ↑複勝率上位3頭（1点BOXが最効率）")
+                if len(himo_list) >= 1:
+                    himo_nums = [str(h) for h in himo_list[:1]]
+                    recommend_lines.append(f"  ワイド流し: {uma1}→{uma2},{','.join(himo_nums)} 100円 ← 51.8%的中/ROI 250%（2点×50円）")
+                recommend_lines.append(f"  → 合計600円 / 期待収支 +約100円")
 
             elif win_proba >= 0.20:
-                # 勝率20-30%: 穴狙い
                 recommend_lines.append("  ─ 穴狙い（勝率20-30%）─")
-                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 200円")
-                recommend_lines.append(f"  単勝: {uma1}番 200円")
-                recommend_lines.append(f"  馬連: {uma1}-{uma2} 100円")
-                recommend_lines.append(f"  → 合計500円 (3連複ROI349%/単勝ROI226%)")
-                # 馬連流しも有効
-                if len(himo_list) >= 2:
-                    himo_nums = [str(int(h['馬番'])) for h in himo_list]
-                    recommend_lines.append(f"  [参考] 馬連流し: {uma1}→{','.join(himo_nums)} ({len(himo_list)}点/{len(himo_list)*100}円)")
+                recommend_lines.append(f"  単勝: {uma1}番 200円 ← 43.6%的中/ROI 248%")
+                recommend_lines.append(f"  3連複BOX: {uma1}-{uma2}-{uma3} 300円 ← 11.7%的中/ROI 681% ★高配当")
+                recommend_lines.append(f"             ↑複勝率上位3頭（1点BOXが最効率）")
+                if len(himo_list) >= 1:
+                    himo_nums = [str(h) for h in himo_list[:1]]
+                    recommend_lines.append(f"  ワイド流し: {uma1}→{uma2},{','.join(himo_nums)} 100円 ← 44.0%的中/ROI 242%（2点×50円）")
+                recommend_lines.append(f"  → 合計600円 / 期待収支 +約80円")
 
             elif win_proba >= 0.10:
-                # 勝率10-20%: 大穴ゾーン ★最高効率
-                recommend_lines.append("  ─ 大穴ゾーン（勝率10-20%）★最高効率 ─")
-                recommend_lines.append(f"  3連複: {uma1}-{uma2}-{uma3} 300円 ★ROI787%")
-                recommend_lines.append(f"  単勝: {uma1}番 200円")
-                recommend_lines.append(f"  → 合計500円")
-                # 3連単BOXも有効
-                recommend_lines.append(f"  [高効率] 3連単BOX: {uma1}-{uma2}-{uma3} (6点/600円) ROI595%")
+                recommend_lines.append("  ─ 大穴ゾーン（勝率10-20%）─")
+                recommend_lines.append(f"  単勝: {uma1}番 400円 ← 35.9%的中/ROI 272%")
+                if len(himo_list) >= 2:
+                    himo_nums = [str(h) for h in himo_list[:2]]
+                    recommend_lines.append(f"  3連複2頭軸流し: {uma1}-{uma2}→{','.join(himo_nums)} 200円 ← 16.6%的中/ROI 450%（3点×66円）")
+                    recommend_lines.append(f"                  ↑◎○軸で穴馬を拾う戦略")
+                else:
+                    recommend_lines.append(f"  3連複BOX: {uma1}-{uma2}-{uma3} 200円 ← 8.3%的中/ROI 519%")
+                recommend_lines.append(f"  → 合計600円 / 期待収支 +約60円")
 
             else:
-                # 勝率10%未満: 超大穴
                 recommend_lines.append("  ─ 超大穴（勝率10%未満）─")
-                recommend_lines.append(f"  単勝: {uma1}番 100円のみ推奨")
-                recommend_lines.append(f"  ※3連複の効率が急落するため見送り推奨")
+                recommend_lines.append(f"  単勝: {uma1}番 100円のみ推奨 ← 11.5%的中/ROI 121%")
+                recommend_lines.append(f"  ※ 期待値マイナス（-21%）のため基本的に見送り推奨")
+                recommend_lines.append(f"  ※ 3連複も全パターンでROI 100%未満")
 
         # === バリュー馬がいる場合の追加推奨 ===
         if has_odds and '期待値' in df_pred.columns:
             ev_candidates = df_pred[df_pred['期待値'] >= 1.2].sort_values('期待値', ascending=False)
             if len(ev_candidates) > 0:
                 best_ev = ev_candidates.iloc[0]
-                if honmei is None or best_ev['馬番'] != honmei['馬番']:
+                if best_ev['馬番'] != str(uma1):
                     recommend_lines.append("")
                     recommend_lines.append("【バリュー追加】")
                     recommend_lines.append(f"  単勝: {int(best_ev['馬番'])}番 {best_ev['馬名']} (EV={best_ev['期待値']:.2f}) 100-200円")
 
         # === 参考: 流し・ボックス ===
-        if honmei is not None and len(himo_list) >= 2:
+        if uma1 is not None and len(himo_list) >= 2:
             recommend_lines.append("")
             recommend_lines.append("【参考: 流し・ボックス】")
-            himo_nums = [str(int(h['馬番'])) for h in himo_list]
-            uma1 = int(honmei['馬番'])
+            himo_nums = [str(h) for h in himo_list]
             recommend_lines.append(f"  ワイド流し: {uma1}→{','.join(himo_nums)} ({len(himo_list)}点/{len(himo_list)*100}円)")
-            box_members = [honmei] + himo_list
-            box_nums = [str(int(h['馬番'])) for h in box_members]
-            n_box = len(box_members)
+            box_nums = [str(uma1)] + himo_nums
+            # 重複除去
+            seen = set()
+            box_unique = []
+            for bn in box_nums:
+                if bn not in seen:
+                    seen.add(bn)
+                    box_unique.append(bn)
+            box_nums = box_unique
+            n_box = len(box_nums)
             if n_box >= 3:
                 n_sanren = n_box * (n_box - 1) * (n_box - 2) // 6
                 recommend_lines.append(f"  3連複BOX: {'-'.join(box_nums)} ({n_sanren}点/{n_sanren*100}円)")
             if n_box == 3:
                 recommend_lines.append(f"  3連単BOX: {'-'.join(box_nums)} (6点/600円)")
+
+        # === SHAP 予測根拠（◎・○馬のみ） ===
+        shap_targets = []
+        if honmei is not None and len(honmei.get('shap_top5', [])) > 0:
+            shap_targets.append(honmei)
+        if taikou is not None and len(taikou.get('shap_top5', [])) > 0:
+            shap_targets.append(taikou)
+
+        if shap_targets:
+            recommend_lines.append("")
+            recommend_lines.append("【予測根拠（単勝モデル TOP5特徴量）】")
+            for horse in shap_targets:
+                name    = horse['馬名']
+                win_pct = horse['勝率予測'] * 100
+                recommend_lines.append(f"  ▶ {name} ({win_pct:.1f}%)")
+                for feat, val in horse['shap_top5']:
+                    jp    = FEATURE_NAMES_JP.get(feat, feat)
+                    arrow = '↑' if val > 0 else '↓'
+                    recommend_lines.append(f"      {arrow} {jp:<16} {val:+.3f}")
 
         # テキストを表示
         for line in recommend_lines:

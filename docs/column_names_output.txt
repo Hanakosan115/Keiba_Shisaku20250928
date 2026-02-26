@@ -1,0 +1,47 @@
+Total rows: 16
+Total columns: 27
+
+Column names (with repr):
+ 1. 着順 | repr: '着順'
+ 2. 枠番 | repr: '枠番'
+ 3. 馬番 | repr: '馬番'
+ 4. 馬名 | repr: '馬名'
+ 5. HorseName_url | repr: 'HorseName_url'
+ 6. 性齢 | repr: '性齢'
+ 7. 斤量 | repr: '斤量'
+ 8. 騎手 | repr: '騎手'
+ 9. タイム | repr: 'タイム'
+10. 着差 | repr: '着差'
+11. 単勝 | repr: '単勝'
+12. 人気 | repr: '人気'
+13. 馬体重 | repr: '馬体重'
+14. 調教師 | repr: '調教師'
+15. race_id | repr: 'race_id'
+16. race_num | repr: 'race_num'
+17. race_name | repr: 'race_name'
+18. course_type | repr: 'course_type'
+19. turn_detail | repr: 'turn_detail'
+20. turn | repr: 'turn'
+21. distance | repr: 'distance'
+22. weather | repr: 'weather'
+23. track_condition | repr: 'track_condition'
+24. start_time | repr: 'start_time'
+25. date | repr: 'date'
+26. track_name | repr: 'track_name'
+27. horse_id | repr: 'horse_id'
+
+
+Checking deduplication logic:
+'馬番' in df.columns: True
+'Umaban' in df.columns: False
+
+
+Columns containing '馬' or '番':
+  - 枠番 | repr: '枠番'
+    Sample values: ['4', '3', '7']
+  - 馬番 | repr: '馬番'
+    Sample values: ['7', '6', '13']
+  - 馬名 | repr: '馬名'
+    Sample values: ['エースアビリティ', 'モリノセピア', 'スマートスコープ']
+  - 馬体重 | repr: '馬体重'
+    Sample values: ['480(+2)', '484(+12)', '500(-4)']

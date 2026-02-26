@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>レースID収集ガイド</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+        }
+        .step {
+            background: #ecf0f1;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #3498db;
+            border-radius: 5px;
+        }
+        .code-box {
+            background: #2c3e50;
+            color: #2ecc71;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        .target-dates {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .target-dates ul {
+            column-count: 2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏇 レースID収集ガイド</h1>
+
+        <div class="warning">
+            <strong>⚠️ 重要：</strong>この方法が最も確実です！<br>
+            自動生成では存在しないレースIDを大量に作ってしまうため、手動収集を推奨します。
+        </div>
+
+        <h2>📅 収集対象期間</h2>
+        <div class="target-dates">
+            <strong>2025年9月～12月の週末</strong>
+            <ul>
+                <li>9月6-7日</li>
+                <li>9月13-15日</li>
+                <li>9月20-21日</li>
+                <li>9月27-28日</li>
+                <li>10月4-5日</li>
+                <li>10月11-13日</li>
+                <li>10月18-19日</li>
+                <li>10月25-26日</li>
+                <li>11月1-2日</li>
+                <li>11月8-9日</li>
+                <li>11月15-16日</li>
+                <li>11月22-23日</li>
+                <li>11月29-30日</li>
+                <li>12月6-7日</li>
+            </ul>
+        </div>
+
+        <h2>🔧 収集手順</h2>
+
+        <div class="step">
+            <strong>ステップ1:</strong> カレンダーページを開く<br>
+            <a href="https://race.netkeiba.com/top/calendar.html?year=2025&month=9" target="_blank">
+                https://race.netkeiba.com/top/calendar.html?year=2025&month=9
+            </a>
+        </div>
+
+        <div class="step">
+            <strong>ステップ2:</strong> 収集したい日付をクリック（例: 9月6日）
+        </div>
+
+        <div class="step">
+            <strong>ステップ3:</strong> レース一覧ページで <strong>F12</strong> を押して開発者ツールを開く
+        </div>
+
+        <div class="step">
+            <strong>ステップ4:</strong> <strong>Console</strong> タブをクリック
+        </div>
+
+        <div class="step">
+            <strong>ステップ5:</strong> 以下のコードをコピーして、Consoleに貼り付けて <strong>Enter</strong>
+            <div class="code-box">
+const raceIds = new Set();
+document.querySelectorAll('a[href*="race_id="]').forEach(a => {
+    const match = a.href.match(/race_id=(\d{12})/);
+    if (match) raceIds.add(match[1]);
+});
+Array.from(raceIds).sort().forEach(id => console.log(id));
+            </div>
+        </div>
+
+        <div class="step">
+            <strong>ステップ6:</strong> 出力されたレースIDをコピー（全て選択して Ctrl+C）
+        </div>
+
+        <div class="step">
+            <strong>ステップ7:</strong> <code>race_ids.txt</code> に貼り付け
+        </div>
+
+        <div class="step">
+            <strong>ステップ8:</strong> 統合GUIツールでデータ更新を実行
+        </div>
+
+        <div class="success">
+            <strong>✅ 完了！</strong><br>
+            各週末について同じ手順を繰り返せば、完璧なデータベースが完成します。
+        </div>
+
+        <h2>⏱️ 時間の見積もり</h2>
+        <div class="step">
+            <ul>
+                <li>各週末のレースID収集: 約3分</li>
+                <li>14週末 × 3分 = <strong>約42分</strong></li>
+                <li>自動スクレイピング: 約10-15分（自動）</li>
+                <li><strong>合計: 約1時間</strong>で完璧なデータベース！</li>
+            </ul>
+        </div>
+
+        <h2>💡 ショートカット</h2>
+        <div class="step">
+            <strong>複数日をまとめて収集:</strong><br>
+            1つの日付で上記のコードを実行したら、すぐに別の日付のタブに切り替えて同じコードを実行。<br>
+            全てのレースIDを1つの <code>race_ids.txt</code> にまとめて貼り付ければ、一気に処理できます。
+        </div>
+
+        <h2>🔗 便利リンク</h2>
+        <div class="step">
+            <button onclick="window.open('https://race.netkeiba.com/top/calendar.html?year=2025&month=9', '_blank')">
+                9月カレンダー
+            </button>
+            <button onclick="window.open('https://race.netkeiba.com/top/calendar.html?year=2025&month=10', '_blank')">
+                10月カレンダー
+            </button>
+            <button onclick="window.open('https://race.netkeiba.com/top/calendar.html?year=2025&month=11', '_blank')">
+                11月カレンダー
+            </button>
+            <button onclick="window.open('https://race.netkeiba.com/top/calendar.html?year=2025&month=12', '_blank')">
+                12月カレンダー
+            </button>
+        </div>
+
+        <div class="warning">
+            <strong>📝 メモ:</strong><br>
+            収集したレースIDは <code>race_ids.txt</code> に保存して、統合GUIツール（keiba_manager_gui.py）から読み込むこともできます。
+        </div>
+    </div>
+</body>
+</html>
