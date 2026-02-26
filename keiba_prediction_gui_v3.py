@@ -70,7 +70,12 @@ except ImportError:
 
 # SHAP (予測根拠表示)
 try:
+    import warnings
     import shap
+    # LightGBM binary + SHAP 0.48.0 で出る既知の動作変更Warningを抑制
+    warnings.filterwarnings('ignore',
+        message='.*LightGBM binary classifier.*shap values output.*',
+        category=UserWarning)
     SHAP_AVAILABLE = True
 except ImportError:
     print("Warning: shap not found. SHAP explanation disabled.")
