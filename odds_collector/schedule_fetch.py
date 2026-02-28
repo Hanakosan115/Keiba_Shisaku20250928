@@ -66,7 +66,9 @@ def fetch_today_schedule(target_date: str) -> list[dict]:
     target_date: 'YYYYMMDD'
     returns: [{'race_id': ..., 'race_name': ..., 'start_time': ..., 'venue': ...}, ...]
     """
-    url = f'https://race.netkeiba.com/top/race_list.html?kaisai_date={target_date}'
+    # race_list.html はJavaScript動的読み込みのため0件になる。
+    # 静的HTMLを返す race_list_sub.html を使用する。
+    url = f'https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={target_date}'
     print(f'  取得中: {url}')
 
     try:
