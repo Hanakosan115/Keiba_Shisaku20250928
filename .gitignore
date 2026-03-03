@@ -1,0 +1,61 @@
+# ===== 認証情報 =====
+.env
+note_publisher/.env
+
+# ===== Python キャッシュ =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 大容量データファイル（Git管理外） =====
+# 訓練・バックテスト用 CSV（数百MB）
+netkeiba_data_*.csv
+phase13_train_features*.csv
+phase13_val_features*.csv
+phase13_test_features*.csv
+phase13_full_backtest_checkpoint_*.csv
+backtest_gui_*.csv
+backtest_full_*.csv
+phase_a_*.csv
+phase_b_*.csv
+phase_c_*.csv
+phase10_*.csv
+phase11_*.csv
+phase12_*.csv
+phase9_*.csv
+
+# チェックポイント
+calculate_features_checkpoint.csv
+calculate_features_errors.csv
+
+# ===== DB・キャッシュ =====
+*.db
+payout_cache.pkl
+model_stats_cache.pkl
+
+# ===== モデルファイル =====
+# ルート直下の .pkl は除外
+*.pkl
+# models/ フォルダ内の .pkl と .txt は Git 管理する
+!models/**/*.pkl
+!models/**/*.txt
+
+# ===== バックアップ =====
+*.txt.bak
+*_backup_*.csv
+
+# ===== ログ・一時ファイル =====
+*.log
+nul
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== HTML デバッグ =====
+debug_*.html
+test_*.html
+dec28_page.html
+note_*.png
+horse_*.html
+shutuba_*.html

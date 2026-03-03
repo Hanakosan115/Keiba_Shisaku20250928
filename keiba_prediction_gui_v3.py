@@ -824,7 +824,7 @@ class KeibaGUIv3:
         title_frame.pack(fill=tk.X)
         title_frame.pack_propagate(False)
 
-        title = tk.Label(title_frame, text="🏇 競馬予想AI - Phase 10 Hybrid",
+        title = tk.Label(title_frame, text="🏇 競馬予想AI - Phase 14",
                         font=("Arial", 18, "bold"), bg="#2196F3", fg="white")
         title.pack(pady=15)
 
@@ -861,7 +861,7 @@ class KeibaGUIv3:
 
         self.export_button = tk.Button(button_frame, text="💾 結果をCSV保存",
                                        command=self.export_results,
-                                       bg="#2196F3", fg="white",
+                                       bg="#546E7A", fg="white",
                                        font=("Arial", 10, "bold"),
                                        width=20, height=1,
                                        state=tk.DISABLED)
@@ -869,7 +869,7 @@ class KeibaGUIv3:
 
         self.update_button = tk.Button(button_frame, text="🔄 このレースのデータ更新",
                                        command=self.update_race_data,
-                                       bg="#FF9800", fg="white",
+                                       bg="#546E7A", fg="white",
                                        font=("Arial", 10, "bold"),
                                        width=20, height=1)
         self.update_button.pack(pady=5)
@@ -877,7 +877,7 @@ class KeibaGUIv3:
         # 期間指定データ収集ボタン
         self.period_collect_button = tk.Button(button_frame, text="📅 期間データ収集",
                                                command=self.open_period_collection_dialog,
-                                               bg="#9C27B0", fg="white",
+                                               bg="#546E7A", fg="white",
                                                font=("Arial", 10, "bold"),
                                                width=20, height=1)
         self.period_collect_button.pack(pady=5)
@@ -885,7 +885,7 @@ class KeibaGUIv3:
         # Win5予測ボタン
         self.win5_button = tk.Button(button_frame, text="🏆 Win5予測",
                                      command=self.predict_win5,
-                                     bg="#E91E63", fg="white",
+                                     bg="#546E7A", fg="white",
                                      font=("Arial", 10, "bold"),
                                      width=20, height=1)
         self.win5_button.pack(pady=5)
@@ -902,7 +902,7 @@ class KeibaGUIv3:
         self.progress.pack(pady=10)
 
         # 統計情報表示
-        stats_frame = tk.LabelFrame(left_frame, text="Phase 12 統計", font=("Arial", 10, "bold"))
+        stats_frame = tk.LabelFrame(left_frame, text="Phase 14 統計", font=("Arial", 10, "bold"))
         stats_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         # データベース情報
@@ -916,24 +916,19 @@ class KeibaGUIv3:
         total_horses = stats.get('total_horses', 0)
         father_missing = stats.get('father_missing', 0)
 
-        # Phase12統計テキスト組み立て
-        p12 = self.phase12_stats if hasattr(self, 'phase12_stats') else None
-        if p12:
-            sr = p12['strategy_rois']
-            stats_text = (
-                f"Phase 12 バックテスト結果:\n\n"
-                f"  的中率: {p12['hit_rate']*100:.1f}%\n"
-                f"  複勝率: {p12['top3_rate']*100:.1f}%\n"
-                f"  ROI: {p12['roi']*100:.1f}%\n"
-                f"  総レース数: {p12['total']:,}レース\n\n"
-                f"期待値ベース戦略:\n"
-                f"  期待値 >= 2.0: ROI {sr.get(2.0, 0)*100:.1f}%\n"
-                f"  期待値 >= 1.5: ROI {sr.get(1.5, 0)*100:.1f}%\n"
-                f"  期待値 >= 1.2: ROI {sr.get(1.2, 0)*100:.1f}%\n\n"
-                f"特徴量数: 79個\n"
-            )
-        else:
-            stats_text = "統計情報なし\n（phase12_backtest_results.csv が見つかりません）\n"
+        # Phase14モデル情報テキスト組み立て
+        stats_text = (
+            "Phase 14 モデル情報:\n\n"
+            "  単勝モデル AUC: 0.7988\n"
+            "  複勝モデル AUC: 0.7558\n"
+            "  使用特徴量: 39個\n"
+            "  訓練期間: 2020〜2022年\n"
+            "  OOS検証: 2024・2025年\n\n"
+            "GUI一致バックテスト (2024 OOS):\n"
+            "  Rule4 ROI: 139.1%\n"
+            "  Rule4 ROI (2025): 154.8%\n"
+            "  年間件数: ~6,349件\n"
+        )
 
         stats_text += (
             f"\n{'━'*28}\n"
@@ -1030,15 +1025,15 @@ class KeibaGUIv3:
         self.result_tree.tag_configure('low_reliability', foreground='#999999')
 
         # 推奨馬券表示エリア（予測結果の下に配置）- サイズ拡大
-        recommend_frame = tk.LabelFrame(right_frame, text="💰 推奨馬券・戦略ガイド", font=("Arial", 11, "bold"), fg="#E91E63")
+        recommend_frame = tk.LabelFrame(right_frame, text="📋 予測結果・推奨買い目", font=("Arial", 11, "bold"), fg="#37474F")
         recommend_frame.pack(fill=tk.BOTH, expand=True, pady=10)
 
         # スクロール付きテキスト（高さ拡大: 8→15）
         recommend_scroll = tk.Scrollbar(recommend_frame)
         recommend_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.recommend_text = tk.Text(recommend_frame, height=15, font=("Courier", 10),
-                                      bg="#FFFACD", state=tk.DISABLED, wrap=tk.WORD,
+        self.recommend_text = tk.Text(recommend_frame, height=15, font=("Consolas", 10),
+                                      bg="#FFFFFF", state=tk.DISABLED, wrap=tk.WORD,
                                       yscrollcommand=recommend_scroll.set)
         self.recommend_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         recommend_scroll.config(command=self.recommend_text.yview)
@@ -1049,7 +1044,7 @@ class KeibaGUIv3:
 
         self.stats_viz_button = tk.Button(analysis_button_frame, text="📊 統計情報グラフ",
                                           command=self.show_statistics_visualization,
-                                          bg="#3F51B5", fg="white",
+                                          bg="#546E7A", fg="white",
                                           font=("Arial", 9, "bold"),
                                           width=18, height=1,
                                           state=tk.DISABLED)
@@ -1057,7 +1052,7 @@ class KeibaGUIv3:
 
         self.detail_analysis_button = tk.Button(analysis_button_frame, text="🔍 詳細分析",
                                                command=self.show_detailed_analysis,
-                                               bg="#00897B", fg="white",
+                                               bg="#546E7A", fg="white",
                                                font=("Arial", 9, "bold"),
                                                width=18, height=1,
                                                state=tk.DISABLED)
@@ -1092,6 +1087,39 @@ class KeibaGUIv3:
             'day': day,
             'race_num': race_num,
         }
+
+    def _get_odds_from_snapshot_db(self, race_id: str) -> dict:
+        """
+        odds_timeseries.db からこのレースの最新オッズを取得する。
+        タスクスケジューラ or 手動実行で保存されたスナップショットを使用。
+        returns: {'1': 4.5, '2': 12.3, ...}  馬番(文字列) → 単勝オッズ
+                 データがなければ空dict
+        """
+        import sqlite3 as _sqlite3
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'odds_collector', 'odds_timeseries.db')
+        if not os.path.exists(db_path):
+            return {}
+        try:
+            conn = _sqlite3.connect(db_path)
+            # umaban列でマッチング（最新タイミングのデータを優先）
+            rows = conn.execute('''
+                SELECT umaban, odds_win, recorded_at
+                FROM odds_snapshots
+                WHERE race_id = ? AND odds_win > 0 AND umaban != ''
+                ORDER BY recorded_at DESC
+            ''', (race_id,)).fetchall()
+            conn.close()
+        except Exception:
+            return {}
+
+        # 同一馬番の中で最新レコードのみ残す
+        seen = {}
+        for umaban, odds_win, rec_at in rows:
+            uma = str(int(float(umaban))) if umaban else ''
+            if uma and uma not in seen:
+                seen[uma] = odds_win
+        return seen
 
     def get_race_from_database(self, race_id):
         """データベースからレース情報を取得"""
@@ -1503,6 +1531,20 @@ class KeibaGUIv3:
                 self.insert_text("  ソース: netkeiba結果ページ（過去レース・オッズあり）\n", "info")
             else:
                 self.insert_text("  ソース: netkeiba出馬表（未来レース）\n", "info")
+
+            # オッズが未取得の場合、ローカルDBから補完を試みる
+            if not has_odds and horses:
+                db_odds = self._get_odds_from_snapshot_db(race_id)
+                if db_odds:
+                    for h in horses:
+                        uma = str(h.get('馬番', ''))
+                        if uma in db_odds and db_odds[uma] > 0:
+                            h['単勝オッズ'] = db_odds[uma]
+                    has_odds = any(h.get('単勝オッズ', 0) > 0 for h in horses)
+                    if has_odds:
+                        self.insert_text(
+                            f"  ✓ オッズをローカルDB（odds_timeseries.db）から補完しました"
+                            f"（{len(db_odds)}頭分）\n", "success")
 
             # オッズの有無を表示
             if not has_odds:
