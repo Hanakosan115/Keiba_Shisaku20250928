@@ -122,6 +122,14 @@ FEATURE_NAMES_JP = {
     'is_重':                     '重馬場',
     'is_不良':                   '不良馬場',
     'frame_number':              '枠番',
+    # Phase R1 追加特徴量
+    'heavy_track_win_rate':      '道悪勝率',
+    'distance_change':           '前走距離差(m)',
+    'kiryou':                    '斤量(kg)',
+    'is_female':                 '牝馬フラグ',
+    'horse_age':                 '馬齢',
+    'horse_weight':              '馬体重(kg)',
+    'weight_change':             '馬体重増減(kg)',
 }
 
 
@@ -1178,7 +1186,9 @@ class KeibaGUIv3:
                 'horse_id': row['horse_id'],
                 '騎手': row.get('騎手', ''),
                 '調教師': row.get('調教師', ''),
-                '斤量': '',
+                '斤量': row.get('斤量', ''),
+                '性齢': row.get('性齢', ''),
+                '馬体重': row.get('馬体重', ''),
                 '単勝オッズ': row.get('win_odds', 0) if pd.notna(row.get('win_odds')) else 0,
                 '実際の着順': row.get('rank')  # 答え合わせ用
             })
@@ -1833,7 +1843,7 @@ class KeibaGUIv3:
                         waku_num = None
                     race_info['waku'] = waku_num
 
-                    # 特徴量計算 (Phase 14: 39特徴量)
+                    # 特徴量計算 (Phase R1: 46特徴量)
                     try:
                         features = calculate_horse_features_safe(
                             horse_id, self.df, current_date, self.sire_stats,
@@ -1844,7 +1854,10 @@ class KeibaGUIv3:
                             race_info.get('course_type'),
                             race_info.get('track_condition'),
                             waku_num,
-                            race_id=race_id
+                            race_id=race_id,
+                            horse_kiryou=horse.get('斤量'),
+                            horse_seire=horse.get('性齢'),
+                            horse_weight_str=horse.get('馬体重'),
                         )
                     except Exception as e:
                         print(f"特徴量計算エラー [{horse['馬名']}]: {e}")
@@ -2539,7 +2552,7 @@ class KeibaGUIv3:
                             waku_num = None
                         race_info['waku'] = waku_num
 
-                        # 特徴量計算 (Phase 14: 39特徴量)
+                        # 特徴量計算 (Phase R1: 46特徴量)
                         try:
                             features = calculate_horse_features_safe(
                                 horse_id, self.df, current_date, self.sire_stats,
@@ -2550,7 +2563,10 @@ class KeibaGUIv3:
                                 race_info.get('course_type'),
                                 race_info.get('track_condition'),
                                 waku_num,
-                                race_id=race_id
+                                race_id=race_id,
+                                horse_kiryou=horse.get('斤量'),
+                                horse_seire=horse.get('性齢'),
+                                horse_weight_str=horse.get('馬体重'),
                             )
                         except Exception as e:
                             print(f"[WIN5]   特徴量計算エラー [{horse.get('馬名', '?')}]: {e}")

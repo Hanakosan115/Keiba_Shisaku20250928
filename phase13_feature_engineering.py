@@ -161,7 +161,8 @@ def calculate_horse_features_safe(
     trainer_name=None, jockey_name=None,
     race_track=None, race_distance=None, race_course_type=None,
     race_track_condition=None, current_frame=None,
-    race_id=None
+    race_id=None,
+    horse_kiryou=None, horse_seire=None, horse_weight_str=None
 ):
     """
     馬の特徴量を計算（リーケージ完全排除版）
@@ -338,6 +339,35 @@ def calculate_horse_features_safe(
             features['class_change'] = 0
             features['current_class'] = 3
 
+        # ============================================================
+        # Phase R1 追加特徴量 (B-1, B-5)
+        # ============================================================
+
+        # B-1: heavy_track_win_rate（道悪[重・不良]での過去勝率）
+        if 'track_condition' in horse_races.columns:
+            heavy_races = horse_races[horse_races['track_condition'].isin(['重', '不良'])].copy()
+            heavy_races['rank'] = pd.to_numeric(heavy_races['rank'], errors='coerce')
+            heavy_finished = heavy_races[heavy_races['rank'].notna()]
+            features['heavy_track_win_rate'] = (
+                (heavy_finished['rank'] == 1).sum() / len(heavy_finished)
+                if len(heavy_finished) > 0 else 0.0
+            )
+        else:
+            features['heavy_track_win_rate'] = latest.get('heavy_track_win_rate', 0.0)
+
+        # B-5: distance_change（前走との距離差）
+        if race_distance is not None:
+            try:
+                prev_dist = pd.to_numeric(horse_races.iloc[-1].get('distance'), errors='coerce')
+                features['distance_change'] = (
+                    float(race_distance) - float(prev_dist)
+                    if pd.notna(prev_dist) else 0.0
+                )
+            except Exception:
+                features['distance_change'] = 0.0
+        else:
+            features['distance_change'] = 0.0
+
     else:
         # データなし（デビュー前や新馬）
         features['total_starts'] = 0
@@ -363,6 +393,59 @@ def calculate_horse_features_safe(
         features['avg_position_change'] = 0.0
         features['class_change'] = 0
         features['current_class'] = 3
+        features['heavy_track_win_rate'] = 0.0
+        features['distance_change'] = 0.0
+
+    # ============================================================
+    # Phase R1 追加特徴量 (B-2, B-3, B-4) — 現レース情報から取得
+    # ============================================================
+
+    # B-2: kiryou（斤量）
+    if horse_kiryou is not None:
+        try:
+            features['kiryou'] = float(horse_kiryou)
+        except (ValueError, TypeError):
+            features['kiryou'] = 55.0
+    else:
+        features['kiryou'] = 55.0
+
+    # B-3: is_female（牝馬フラグ）・horse_age（馬齢）
+    if horse_seire:
+        seire = str(horse_seire)
+        features['is_female'] = 1 if seire.startswith('牝') else 0
+        m = re.search(r'\d+', seire)
+        features['horse_age'] = int(m.group()) if m else 0
+    else:
+        features['is_female'] = 0
+        features['horse_age'] = 0
+
+    # B-4: horse_weight（馬体重）・weight_change（前走比増減）
+    if horse_weight_str:
+        m = re.match(r'(\d+)\(([+-]?\d+)\)', str(horse_weight_str))
+        if m:
+            # "460(+2)" 形式（GUI スクレイピング）
+            features['horse_weight'] = int(m.group(1))
+            features['weight_change'] = int(m.group(2))
+        else:
+            # 数値のみ（標準化DB: horse_weight カラム）→ 履歴から増減を計算
+            num_m = re.search(r'\d+', str(horse_weight_str))
+            if num_m:
+                current_w = int(num_m.group())
+                features['horse_weight'] = current_w
+                if len(horse_races) > 0 and 'horse_weight' in horse_races.columns:
+                    try:
+                        prev_w = pd.to_numeric(horse_races.iloc[-1].get('horse_weight'), errors='coerce')
+                        features['weight_change'] = int(current_w - prev_w) if pd.notna(prev_w) else 0
+                    except Exception:
+                        features['weight_change'] = 0
+                else:
+                    features['weight_change'] = 0
+            else:
+                features['horse_weight'] = 0
+                features['weight_change'] = 0
+    else:
+        features['horse_weight'] = 0
+        features['weight_change'] = 0
 
     # ============================================================
     # 調教師・騎手成績

@@ -1,8 +1,8 @@
 {
-  "creation_date": "2026-02-23T17:04:02.556816",
+  "creation_date": "2026-03-04T11:18:40.274530",
   "phase": 14,
   "model_type": "LightGBM",
-  "num_features": 39,
+  "num_features": 46,
   "features": [
     "total_starts",
     "total_win_rate",
@@ -27,6 +27,13 @@
     "avg_position_change",
     "class_change",
     "current_class",
+    "heavy_track_win_rate",
+    "distance_change",
+    "kiryou",
+    "is_female",
+    "horse_age",
+    "horse_weight",
+    "weight_change",
     "trainer_win_rate",
     "trainer_top3_rate",
     "trainer_starts",
@@ -44,8 +51,8 @@
     "is_不良",
     "frame_number"
   ],
-  "train_records": 191527,
-  "val_records": 47273,
+  "train_records": 190995,
+  "val_records": 47181,
   "cv_folds": 5,
   "lgb_params": {
     "objective": "binary",
@@ -60,17 +67,17 @@
     "random_state": 42
   },
   "win_model": {
-    "cv_auc_mean": 0.7987987033889716,
-    "cv_auc_std": 0.003311429561674888,
-    "val_auc": 0.7860361480293914,
-    "val_logloss": 0.22424376054489972,
-    "best_iteration": 74
+    "cv_auc_mean": 0.8072651837061764,
+    "cv_auc_std": 0.005640816404033255,
+    "val_auc": 0.7997193416266809,
+    "val_logloss": 0.22018098686362172,
+    "best_iteration": 102
   },
   "place_model": {
-    "cv_auc_mean": 0.7557849541593791,
-    "cv_auc_std": 0.0020388356941886533,
-    "val_auc": 0.7332622170846134,
-    "val_logloss": 0.46628163911070797,
-    "best_iteration": 60
+    "cv_auc_mean": 0.7648934591883643,
+    "cv_auc_std": 0.003220551118881105,
+    "val_auc": 0.7465088349115514,
+    "val_logloss": 0.4583379932032001,
+    "best_iteration": 84
   }
 }

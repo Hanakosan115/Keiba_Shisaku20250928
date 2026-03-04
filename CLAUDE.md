@@ -11,7 +11,7 @@
 
 - 2020〜2025年の netkeiba レースデータ（約290,000件）を学習
 - LightGBM モデルで「この馬が1着になる確率」「3着以内に入る確率」を予測
-- Rule4 複合ベットルールで **GUI完全一致バックテスト（2024 out-of-sample）ROI 139.1%・年間+247,939円** を確認済み
+- Rule4 複合ベットルールで **GUI完全一致バックテスト（2024 out-of-sample）ROI 142.1%・年間+257,480円** を確認済み（Phase R1モデル）
 - GUI（Tkinter）から未来のレースURLを入力 → 予測確率 + 推奨買い目 + SHAP予測根拠を表示
 
 ---
@@ -42,11 +42,12 @@ GO/NO-GO 5基準をすべてクリア
 Phase 14 ✅ → Phase A/B/C ✅ → GUI統合 ✅ → SHAP実装 ✅
 → GUI完全一致バックテスト完了 ✅ → 券種別分析完了 ✅
 → odds_snapshot GUI統合 ✅ → タスクスケジューラ設定 ✅
+→ Phase R1（特徴量追加 B-1〜B-5、7特徴量）✅ → ROI 142.1% 確認済み ✅
                   ↓
          ペーパートレード開始（随時）
 ```
 
-**次のアクション**: 今週末（3/7土曜）タスクスケジューラ自動起動を確認 → `競馬予想ツール.bat` でGUI → Rule4 条件B 中心にペーパー記録
+**次のアクション**: ペーパートレード継続 → Phase R2（血統詳細 C-1）検討
 
 ---
 
@@ -54,13 +55,15 @@ Phase 14 ✅ → Phase A/B/C ✅ → GUI統合 ✅ → SHAP実装 ✅
 
 | 条件 | 年間件数 | 的中率 | ROI（2024 OOS） | ROI（2025 OOS） |
 |------|---------|--------|----------------|----------------|
-| **条件B: pred_win ≥ 10% & odds ≥ 10x** | ~5,500件 | 8〜18% | **154-172%** | **154-172%** |
-| **条件A: pred_win ≥ 20% & odds 2〜10x** | ~2,400件 | 32% | 125.9% | — |
-| **Rule4（A ∪ B）** | **6,349件** | **16.3%** | **139.1%** | **154.8%** |
+| **条件B: pred_win ≥ 10% & odds ≥ 10x** | ~3,561件 | 7.2% | **154.1%** | — |
+| **条件A: pred_win ≥ 20% & odds 2〜10x** | ~2,561件 | 31.9% | 125.3% | — |
+| **Rule4（A ∪ B）** | **6,122件** | **17.5%** | **142.1%** | — |
 
-_(1点100円固定。2024・2025はモデル訓練外の out-of-sample)_
+_(1点100円固定。Phase R1モデル（46特徴量）。2024はout-of-sample)_
 
 ### バックテスト確定数値（GUI完全一致・`run_gui_backtest.py`）
+
+**Phase 14 ベースライン（39特徴量・AUC 0.7988）**:
 
 | 年 | レース数 | Rule4件数 | ROI | 純損益 | 区分 |
 |----|---------|----------|-----|--------|------|
@@ -71,14 +74,22 @@ _(1点100円固定。2024・2025はモデル訓練外の out-of-sample)_
 | **2024** | **3,454** | **6,349件** | **139.1%** | **+247,939円** | **out-of-sample ✓** |
 | **2025** | **2,867** | **5,495件** | **154.8%** | **+300,870円** | **out-of-sample ✓** |
 
+**Phase R1（46特徴量・AUC 0.7997）— 現在の有効モデル**:
+
+| 年 | レース数 | Rule4件数 | ROI | 純損益 | 区分 |
+|----|---------|----------|-----|--------|------|
+| **2024** | **3,454** | **6,122件** | **142.1%** | **+257,480円** | **out-of-sample ✓** |
+
+（Phase R1追加特徴量: heavy_track_win_rate・distance_change・kiryou・is_female・horse_age・horse_weight・weight_change）
+
 ---
 
 ## 券種別分析結果（2024年 out-of-sample）
 
 | 券種 | ヒット率 | ROI | 推奨 |
 |------|---------|-----|------|
-| **単勝 Rule4 条件B（odds≥10x）** | 8.7% | **151.7%** | ★最推奨 |
-| 単勝 Rule4 条件A（odds 2-10x） | 36.7% | 140.9% | ★推奨 |
+| **単勝 Rule4 条件B（odds≥10x）** | 7.2% | **154.1%** | ★最推奨 |
+| 単勝 Rule4 条件A（odds 2-10x） | 31.9% | 125.3% | ★推奨 |
 | 単勝◎ 全買い | 32.1% | 129.4% | 参考 |
 | 複勝◎ 全買い | 58.1% | ~80-90%（推定） | 非推奨（配当圧縮） |
 | ワイド（複勝率1-2位） | 22.9% | ~114%（推定） | 要実データ確認 |
@@ -94,9 +105,12 @@ _(1点100円固定。2024・2025はモデル訓練外の out-of-sample)_
 | ファイル | 役割 |
 |----------|------|
 | `keiba_prediction_gui_v3.py` | GUI本体（予測・推奨買い目・SHAP・DBオッズ補完） |
-| `phase14_model_win.txt` | 単勝予測モデル（LightGBM、AUC 0.7988） |
-| `phase14_model_place.txt` | 複勝予測モデル（LightGBM、AUC 0.7558） |
-| `phase14_feature_list.pkl` | 39特徴量リスト |
+| `phase14_model_win.txt` | 単勝予測モデル（LightGBM、AUC 0.7997・Phase R1） |
+| `phase14_model_place.txt` | 複勝予測モデル（LightGBM） |
+| `phase14_feature_list.pkl` | 46特徴量リスト（Phase R1） |
+| `models/phase14_baseline/` | ベースラインモデル保存（AUC 0.7988・39特徴量） |
+| `models/phase_r1/` | Phase R1モデル保存（AUC 0.7997・46特徴量） |
+| `restore_model.py` | モデルバージョン切り替えスクリプト |
 | `run_gui_backtest.py` | GUI完全一致バックテスト（`predict_core()`直接呼び出し） |
 | `paper_trade_log.csv` | ペーパートレード記録CSV |
 | `paper_trade_review.py` | 月次レビュー（PSI・GO/NO-GO・Kelly比較） |
@@ -201,6 +215,10 @@ _(1点100円固定。2024・2025はモデル訓練外の out-of-sample)_
 | 2026/03/01 | KeibaOddsSnapshot タスク修正: schtasks /ri 制限回避のためXML方式で30分間隔を正確に設定 |
 | 2026/03/01 | note.com 自動投稿システム完成（note_publisher/ 一式）: Playwright でログイン→記事作成→有料300円設定→投稿まで完全自動化 |
 | 2026/03/01 | KeibaNotePoster タスク登録（土日 08:30 自動実行） |
+| 2026/03/04 | Phase R1: 特徴量7個追加（heavy_track_win_rate・distance_change・kiryou・is_female・horse_age・horse_weight・weight_change） |
+| 2026/03/04 | Phase R1: 訓練データ再計算（46特徴量・2時間）→ モデル再訓練（Win AUC: 0.7997 ← 0.7988） |
+| 2026/03/04 | Phase R1: get_race_from_database()バグ修正（斤量・性齢・馬体重をDBから取得するよう修正） |
+| 2026/03/04 | Phase R1: 2024 OOS バックテスト完了（Rule4 ROI 142.1%・純損益+257,480円 ← 139.1%・+247,939円） |
 
 ---
 
@@ -245,6 +263,8 @@ df_pred = gui.predict_core(race_id, horses, race_info, has_odds,
 |------|--------|
 | **随時** | **ペーパートレード継続（Rule4 条件B 優先）** |
 | 1〜2ヶ月後 | `py paper_trade_review.py` で GO/NO-GO 判定 |
+| 短期 | Phase R2: 血統詳細（C-1）— 産駒の距離・馬場適性を種牡馬×コース×距離で細分化 |
+| 短期 | Phase R2: 2025 OOS バックテスト（Phase R1モデルで実施していない） |
 | 3〜6ヶ月後 | ワイドの実配当データ検証（odds_collector 蓄積後） |
 | 3〜6ヶ月後 | Phase D-1: オッズドリフト特徴量 |
 | 3〜6ヶ月後 | Isotonic Regression キャリブレーション |
@@ -257,7 +277,7 @@ df_pred = gui.predict_core(race_id, horses, race_info, has_odds,
 | 症状 | 対処 |
 |------|------|
 | `SHAP explainer 初期化失敗` | `py -m pip install shap` |
-| `モデル読み込み失敗` | `phase14_model_win.txt` / `phase14_model_place.txt` / `phase14_feature_list.pkl` の存在確認 |
+| `モデル読み込み失敗` | `phase14_model_win.txt` / `phase14_model_place.txt` / `phase14_feature_list.pkl` の存在確認（`py restore_model.py` でバージョン確認） |
 | GUI予測でエラー | `keiba_prediction_gui_v3.py` L1777 の `float(self.model_win.predict(feat_df)[0])` を確認 |
 | タスクスケジューラが動かない | PCスリープ中 → WakeToRun設定確認 or 手動実行 |
 | odds_snapshot.py でオッズ取得失敗 | レース発売前 or API仕様変更 → `race.netkeiba.com/api/api_get_jra_odds.html?race_id=...&type=1` を確認 |

@@ -145,6 +145,13 @@ def calculate_features_for_dataset(df, dataset_name, df_all_ref, sire_stats, tra
                 'is_重': 0,
                 'is_不良': 0,
                 'frame_number': 4,
+                'heavy_track_win_rate': 0.0,
+                'distance_change': 0.0,
+                'kiryou': 55.0,
+                'is_female': 0,
+                'horse_age': 0,
+                'horse_weight': 0,
+                'weight_change': 0,
             }
         else:
             features = calculate_horse_features_safe(
@@ -156,7 +163,10 @@ def calculate_features_for_dataset(df, dataset_name, df_all_ref, sire_stats, tra
                 race_course_type=row.get('course_type'),
                 race_track_condition=row.get('track_condition'),
                 current_frame=row.get('waku'),
-                race_id=race_id
+                race_id=race_id,
+                horse_kiryou=row.get('斤量'),
+                horse_seire=row.get('性齢'),
+                horse_weight_str=row.get('馬体重'),
             )
 
             if features is None:
