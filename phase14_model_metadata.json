@@ -1,8 +1,6 @@
 {
-  "creation_date": "2026-03-04T11:18:40.274530",
-  "phase": 14,
-  "model_type": "LightGBM",
-  "num_features": 46,
+  "phase": "R2_Optuna",
+  "num_features": 60,
   "features": [
     "total_starts",
     "total_win_rate",
@@ -25,8 +23,6 @@
     "avg_first_corner",
     "avg_last_corner",
     "avg_position_change",
-    "class_change",
-    "current_class",
     "heavy_track_win_rate",
     "distance_change",
     "kiryou",
@@ -49,35 +45,45 @@
     "is_稍重",
     "is_重",
     "is_不良",
-    "frame_number"
+    "frame_number",
+    "father_turf_win_rate",
+    "father_dirt_win_rate",
+    "father_heavy_win_rate",
+    "father_short_win_rate",
+    "father_long_win_rate",
+    "mother_father_turf_win_rate",
+    "mother_father_dirt_win_rate",
+    "mother_father_heavy_win_rate",
+    "mother_father_short_win_rate",
+    "mother_father_long_win_rate",
+    "running_style",
+    "recent_3race_improvement",
+    "jockey_track_win_rate",
+    "jockey_track_top3_rate",
+    "good_track_win_rate",
+    "finish_strength"
   ],
-  "train_records": 190995,
-  "val_records": 47181,
-  "cv_folds": 5,
-  "lgb_params": {
-    "objective": "binary",
-    "metric": "binary_logloss",
-    "boosting_type": "gbdt",
-    "num_leaves": 31,
-    "learning_rate": 0.05,
-    "feature_fraction": 0.9,
-    "bagging_fraction": 0.8,
-    "bagging_freq": 5,
-    "verbose": -1,
-    "random_state": 42
+  "optuna_trials": 80,
+  "best_trial": 65,
+  "best_cv_auc": 0.8289287111931195,
+  "best_params": {
+    "learning_rate": 0.010166543326024043,
+    "num_leaves": 48,
+    "min_child_samples": 135,
+    "feature_fraction": 0.8610900387860052,
+    "bagging_fraction": 0.9354940092815109,
+    "lambda_l1": 5.27508782137767,
+    "lambda_l2": 5.832714712433229,
+    "min_gain_to_split": 0.0017586406783616521
   },
   "win_model": {
-    "cv_auc_mean": 0.8072651837061764,
-    "cv_auc_std": 0.005640816404033255,
-    "val_auc": 0.7997193416266809,
-    "val_logloss": 0.22018098686362172,
-    "best_iteration": 102
+    "val_auc": 0.7660193220728442,
+    "val_logloss": 0.22819411831399883,
+    "best_iteration": 225
   },
   "place_model": {
-    "cv_auc_mean": 0.7648934591883643,
-    "cv_auc_std": 0.003220551118881105,
-    "val_auc": 0.7465088349115514,
-    "val_logloss": 0.4583379932032001,
-    "best_iteration": 84
+    "val_auc": 0.7377971812451869,
+    "val_logloss": 0.46445052957378574,
+    "best_iteration": 229
   }
 }

@@ -1,0 +1,214 @@
+# Phase R2 実装・実行レポート
+
+**実施日**: 2026-03-05
+**担当**: Claude Sonnet 4.6
+
+---
+
+## 概要
+
+Phase R1（46特徴量・ROI 142.1%）の次ステップとして、特徴量を 18個追加（64特徴量）し、
+モデル再訓練と 2024年 OOS バックテストを実施した。
+
+| 指標 | Phase R1 | Phase R2 | 変化 |
+|------|---------|---------|------|
+| 特徴量数 | 46 | **64** | +18 |
+| Win CV AUC (2020-2023) | — | **0.8234** ± 0.0043 | — |
+| Win Val AUC (2024 OOS) | 0.7997 | **0.7596** | ▼ -0.0401 |
+| Place Val AUC (2024 OOS) | — | **0.7320** | — |
+| Rule4 ROI | 142.1% | **144.3%** | ▲ +2.2pp |
+| Rule4 純損益 (2024) | +257,480円 | **+275,049円** | ▲ +17,569円 |
+
+> **結論**: AUC は後退したが、実運用指標の Rule4 ROI は改善。目的達成。
+
+---
+
+## 追加特徴量 18個
+
+### C-1: 血統細分化（10個）
+
+`calculate_sire_stats()` を拡張し、従来の全体勝率に加えてコース・馬場・距離別の勝率を追加。
+
+| 特徴量名 | 説明 |
+|---------|------|
+| `father_turf_win_rate` | 父産駒の芝勝率 |
+| `father_dirt_win_rate` | 父産駒のダート勝率 |
+| `father_heavy_win_rate` | 父産駒の道悪（重/不良）勝率 |
+| `father_short_win_rate` | 父産駒の短距離（≤1400m）勝率 |
+| `father_long_win_rate` | 父産駒の長距離（≥2000m）勝率 |
+| `mother_father_turf_win_rate` | 母父産駒の芝勝率 |
+| `mother_father_dirt_win_rate` | 母父産駒のダート勝率 |
+| `mother_father_heavy_win_rate` | 母父産駒の道悪勝率 |
+| `mother_father_short_win_rate` | 母父産駒の短距離勝率 |
+| `mother_father_long_win_rate` | 母父産駒の長距離勝率 |
+
+### B-6〜9 + C-4,5: 馬・騎手・レース特性（8個）
+
+| 特徴量名 | グループ | 説明 |
+|---------|---------|------|
+| `running_style` | B-6: 脚質 | 1=逃/2=先/3=差/4=追（avg_first_cornerから算出） |
+| `recent_3race_improvement` | B-7: トレンド | 直近3走の着順改善量（正=上昇傾向） |
+| `jockey_track_win_rate` | B-8: 騎手×競馬場 | 騎手の当競馬場での勝率 |
+| `jockey_track_top3_rate` | B-8: 騎手×競馬場 | 騎手の当競馬場での複勝率 |
+| `good_track_win_rate` | B-9: 馬場適性 | 良馬場での勝率（heavy の対称） |
+| `class_adjusted_diff` | C-4: クラス補正 | クラス比で重みづけした着差 |
+| `pace_preference` | C-5: ペース | 通過順前進量の平均（avg_position_change と同値） |
+| `finish_strength` | C-5: ペース | 直近走で3ポジション以上改善した割合 |
+
+---
+
+## モデル性能詳細
+
+### 訓練データ構成
+
+| 項目 | 値 |
+|------|----|
+| 訓練データ期間 | 2020〜2023年 |
+| 検証データ期間 | 2024年 |
+| 訓練レコード数 | 190,995 |
+| 検証レコード数 | 47,181 |
+| 交差検証 | Stratified 5-Fold |
+
+### 単勝モデル
+
+| 指標 | 値 |
+|------|----|
+| 交差検証 AUC | 0.8234 ± 0.0043 |
+| 検証データ AUC | **0.7596** |
+| Best Iteration | 51 |
+
+### 複勝モデル
+
+| 指標 | 値 |
+|------|----|
+| 交差検証 AUC | 0.7742 ± 0.0039 |
+| 検証データ AUC | **0.7320** |
+| Best Iteration | 46 |
+
+### LightGBM パラメータ
+
+```python
+lgb_params = {
+    'objective':         'binary',
+    'metric':            'binary_logloss',
+    'boosting_type':     'gbdt',
+    'num_leaves':        31,
+    'learning_rate':     0.05,
+    'feature_fraction':  0.9,
+    'bagging_fraction':  0.8,
+    'bagging_freq':      5,
+    'random_state':      42,
+    # early_stopping: 50 rounds
+}
+```
+
+---
+
+## 2024 OOS バックテスト結果
+
+```
+総レース数: 3,454レース（2024年）
+
+◎本命的中率: 35.2%  / ROI 137.1%
+
+【Rule4合計】
+  件数:   6,213件
+  的中:   1,040件 (16.7%)
+  ROI:    144.3%
+  純損益: +275,049円
+
+  条件A (pred≥20%, odds  2〜10倍): 2,437件 / 32.1% / ROI 125.0%
+  条件B (pred≥10%, odds ≥10倍  ): 3,776件 /  6.8% / ROI 156.7%
+
+トップ会場: 東京 ROI 203.9%
+```
+
+### Phase R1 比較
+
+| 指標 | Phase R1 | Phase R2 | 差分 |
+|------|---------|---------|------|
+| Rule4 件数 | — | 6,213 | — |
+| Rule4 的中率 | — | 16.7% | — |
+| Rule4 ROI | 142.1% | **144.3%** | ▲ +2.2pp |
+| 純損益 | +257,480円 | **+275,049円** | ▲ +17,569円 |
+| 条件B ROI | — | 156.7% | — |
+
+---
+
+## 変更ファイル一覧
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `phase13_feature_engineering.py` | `calculate_sire_stats()` + `calculate_trainer_jockey_stats()` + `calculate_horse_features_safe()` を拡張（18特徴量追加） |
+| `phase13_calculate_all_features.py` | NA/None フォールバック辞書に18特徴量のデフォルト値を追加 |
+| `phase3_train_model.py` | Phase R2特徴量リストを `phase13_feature_list.pkl` にアペンド + `models/phase_r2/` への保存を追加 |
+| `keiba_prediction_gui_v3.py` | `FEATURE_NAMES_JP` に18エントリ（日本語表示名）を追加 |
+| `CLAUDE.md` | Phase R2 実行結果を修正履歴に追記 |
+
+---
+
+## 保存モデル
+
+```
+models/phase_r2/
+├── model_win.txt       # LightGBM ネイティブ形式（単勝）
+├── model_place.txt     # LightGBM ネイティブ形式（複勝）
+└── feature_list.pkl    # 64特徴量リスト
+
+# ルートにも同一コピー
+phase14_model_win.pkl / .txt
+phase14_model_place.pkl / .txt
+phase14_feature_list.pkl
+phase14_model_metadata.json
+```
+
+---
+
+## 考察: AUC 後退の原因分析
+
+CV AUC 0.8234 vs Val AUC 0.7596 の乖離（Best Iteration 51 と早期収束）から、軽度の過学習が発生していると推定。
+
+### 疑われる原因
+
+| 特徴量 | 問題 |
+|---------|------|
+| `pace_preference` | `avg_position_change` と同一値 → 冗長な特徴量 |
+| `class_adjusted_diff` | `race_name` が標準化CSVに不在の場合、`avg_diff_seconds` と同値に縮退する |
+| `jockey_track_*` | 未知の騎手×会場コンビは `jockey_win_rate` にフォールバック → ノイズ |
+| Best Iteration 51 | num_boost_round=1000 に対して極端に小さい → 学習不足か学習率過多 |
+
+### 評価
+
+Rule4 ROI 144.3% > 142.1% であり、実運用目的（高ROIの賭け機会の検出）は達成。
+AUC 改善は次フェーズの課題とする。
+
+---
+
+## 実行手順サマリー
+
+```bash
+# Step 1: 64特徴量CSV生成（~2時間）
+py calculate_features_standardized.py
+
+# Step 2: LightGBM再訓練
+py phase3_train_model.py
+
+# Step 3: 2024 OOS バックテスト
+py run_gui_backtest.py --year 2024
+```
+
+---
+
+## 次フェーズ候補
+
+| 優先度 | 項目 | 期待効果 |
+|--------|------|---------|
+| 高 | `pace_preference` 削除（重複解消）でAUC改善テスト | AUC ▲ |
+| 高 | `num_leaves` / `learning_rate` チューニング（Optuna等） | AUC + ROI ▲ |
+| 中 | 2025年データで追加 OOS バックテスト | 汎化性能検証 |
+| 中 | Phase R3: オッズ活用特徴量（市場効率の逆張り） | ROI ▲ |
+| 低 | ペーパートレード継続 → 実馬券検討 | — |
+
+---
+
+*Generated by Claude Sonnet 4.6 on 2026-03-05*

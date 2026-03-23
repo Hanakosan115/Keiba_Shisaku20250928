@@ -73,6 +73,19 @@ log_print("")
 df_all = df_all[df_all['year'] < 2026].copy()
 log_print(f"  2026年除外後: {len(df_all):,}レコード")
 
+# Agari（上がり3F実測値）を enriched CSV からマージ
+_enriched_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'data/main/netkeiba_data_2020_2025_enriched.csv')
+if os.path.exists(_enriched_path):
+    log_print("  Agari（上がり3F）を enriched CSV からマージ中...")
+    _agari_df = pd.read_csv(_enriched_path, usecols=['race_id', 'horse_id', 'Agari'], low_memory=False)
+    _agari_df['race_id'] = pd.to_numeric(_agari_df['race_id'], errors='coerce').astype('Int64')
+    df_all['race_id'] = pd.to_numeric(df_all['race_id'], errors='coerce').astype('Int64')
+    df_all = df_all.merge(_agari_df, on=['race_id', 'horse_id'], how='left')
+    log_print(f"  Agariマージ完了: {df_all['Agari'].notna().sum():,}件 / {len(df_all):,}件")
+else:
+    log_print("  ⚠ enriched CSV 未検出。avg_last_3f は従来通り（ほぼ0）")
+
 # 日付正規化を事前に実行（calculate_horse_features_safe内での繰り返し処理を回避）
 if 'date_normalized' not in df_all.columns:
     log_print("  日付正規化中...")

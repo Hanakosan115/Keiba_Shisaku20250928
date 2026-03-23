@@ -39,6 +39,8 @@ import numpy as np
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENRICHED_PATH = os.path.join(BASE_DIR, 'data', 'main',
                               'netkeiba_data_2020_2025_enriched.csv')
+COMPLETE_PATH = os.path.join(BASE_DIR, 'data', 'main',
+                              'netkeiba_data_2020_2025_complete.csv')
 BET_UNIT = 100  # 1点100円固定
 
 VENUE_MAP = {
@@ -63,32 +65,57 @@ def normalize_date_str(date_str):
 def build_payout_table():
     """
     払戻テーブルをローカルデータから構築。
+    enriched.csv（〜2025-08）+ complete.csv（補完）を使用。
     戻り値: {race_id_str: {umaban_str: {'rank': int, 'odds': float}}}
     """
     print("着順・オッズデータ読み込み中...")
-    df = pd.read_csv(ENRICHED_PATH,
-                     usecols=['race_id', 'Umaban', 'Rank', 'Odds_x'],
-                     low_memory=False)
-    # 有効なrace_id（12桁数字）のみ
-    df = df[df['race_id'].astype(str).str.match(r'^\d{12}$')].copy()
-    df['race_id'] = df['race_id'].astype(str)
-    df['Umaban'] = df['Umaban'].apply(
+
+    # ── enriched.csv（メイン） ───────────────────────────
+    df_e = pd.read_csv(ENRICHED_PATH,
+                       usecols=['race_id', 'Umaban', 'Rank', 'Odds_x'],
+                       low_memory=False)
+    df_e = df_e[df_e['race_id'].astype(str).str.match(r'^\d{12}$')].copy()
+    df_e['race_id'] = df_e['race_id'].astype(str)
+    df_e = df_e.rename(columns={'Umaban': '_uma', 'Rank': '_rank', 'Odds_x': '_odds'})
+
+    # ── complete.csv（enriched にない race_id を補完） ───
+    n_supplement = 0
+    if os.path.exists(COMPLETE_PATH):
+        try:
+            df_c = pd.read_csv(COMPLETE_PATH,
+                               usecols=['race_id', '馬番', '着順', '単勝'],
+                               low_memory=False)
+            df_c = df_c[df_c['race_id'].astype(str).str.match(r'^\d{12}$')].copy()
+            df_c['race_id'] = df_c['race_id'].astype(str)
+            existing_ids = set(df_e['race_id'])
+            df_c = df_c[~df_c['race_id'].isin(existing_ids)]
+            df_c = df_c.rename(columns={'馬番': '_uma', '着順': '_rank', '単勝': '_odds'})
+            n_supplement = df_c['race_id'].nunique()
+            df_e = pd.concat([df_e, df_c], ignore_index=True)
+        except Exception as ex:
+            print(f"  [WARN] complete.csv 補完失敗: {ex}")
+
+    n_enriched = df_e['race_id'].nunique() - n_supplement
+    print(f"  enriched: {n_enriched:,}レース + complete補完: {n_supplement:,}レース")
+
+    # ── payout dict 構築 ─────────────────────────────────
+    df_e['_uma'] = df_e['_uma'].apply(
         lambda x: str(int(float(x))) if pd.notna(x) else ''
     )
-    df['rank'] = pd.to_numeric(df['Rank'], errors='coerce')
-    df['odds'] = pd.to_numeric(df['Odds_x'], errors='coerce')
+    df_e['rank'] = pd.to_numeric(df_e['_rank'], errors='coerce')
+    df_e['odds'] = pd.to_numeric(df_e['_odds'], errors='coerce')
 
     payout = {}
-    for _, row in df.iterrows():
+    for _, row in df_e.iterrows():
         rid = row['race_id']
         if rid not in payout:
             payout[rid] = {}
-        payout[rid][row['Umaban']] = {
+        payout[rid][row['_uma']] = {
             'rank': row['rank'],
             'odds': row['odds'],
         }
 
-    print(f"  払戻テーブル: {len(payout):,}レース")
+    print(f"  払戻テーブル合計: {len(payout):,}レース")
     return payout
 
 

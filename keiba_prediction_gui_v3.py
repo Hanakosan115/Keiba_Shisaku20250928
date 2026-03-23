@@ -130,6 +130,43 @@ FEATURE_NAMES_JP = {
     'horse_age':                 '馬齢',
     'horse_weight':              '馬体重(kg)',
     'weight_change':             '馬体重増減(kg)',
+    # Phase R2 追加特徴量
+    'father_turf_win_rate':         '父産駒芝勝率',
+    'father_dirt_win_rate':         '父産駒ダート勝率',
+    'father_heavy_win_rate':        '父産駒道悪勝率',
+    'father_short_win_rate':        '父産駒短距離勝率',
+    'father_long_win_rate':         '父産駒長距離勝率',
+    'mother_father_turf_win_rate':  '母父産駒芝勝率',
+    'mother_father_dirt_win_rate':  '母父産駒ダート勝率',
+    'mother_father_heavy_win_rate': '母父産駒道悪勝率',
+    'mother_father_short_win_rate': '母父産駒短距離勝率',
+    'mother_father_long_win_rate':  '母父産駒長距離勝率',
+    'running_style':                '脚質(1逃2先3差4追)',
+    'recent_3race_improvement':     '直近3走着順改善',
+    'jockey_track_win_rate':        '騎手×競馬場勝率',
+    'jockey_track_top3_rate':       '騎手×競馬場複勝率',
+    'good_track_win_rate':          '良馬場勝率',
+    'finish_strength':              '末脚強度（3+前進率）',
+    # Phase R5
+    'avg_first_corner_fixed':       '平均1角通過順(修正)',
+    'avg_last_corner_fixed':        '平均最終角通過順(修正)',
+    'avg_position_change_v2':       '平均順位変化v2',
+    'running_style_v2':             '脚質v2(修正版)',
+    'slightly_heavy_win_rate':      '稍重馬場勝率',
+    'field_escape_count':           '出走中逃先行頭数',
+    'field_pace_advantage':         '展開有利度',
+    # Phase R6
+    'daily_front_bias':             '当日前有利/後有利バイアス',
+    'daily_prior_races':            '当日前レース数(レース番号)',
+    'horse_style_vs_bias':          '脚質×当日バイアス差',
+    'is_rainy':                     '天候:雨フラグ',
+    'is_sunny':                     '天候:晴フラグ',
+    'prev_agari_relative':          '前走末脚相対指数',
+    # Phase R7
+    'waku_win_rate':                '枠番バイアス勝率',
+    'field_waku_rank':              'レース内枠番有利度',
+    'jockey_changed':               '騎手交代フラグ',
+    'jockey_change_quality':        '騎手交代品質(昇格=正)',
 }
 
 
@@ -215,6 +252,17 @@ class KeibaGUIv3:
                         return m2.group(1)
                     return s
                 self.df['date'] = self.df['date'].apply(_normalize_date)
+
+            # Agari（上がり3F実測値）を enriched CSV からマージ
+            _enriched_path = os.path.join(BASE_DIR, 'data/main/netkeiba_data_2020_2025_enriched.csv')
+            if os.path.exists(_enriched_path):
+                try:
+                    _agari_df = pd.read_csv(_enriched_path,
+                                            usecols=['race_id', 'horse_id', 'Agari'],
+                                            low_memory=False)
+                    self.df = self.df.merge(_agari_df, on=['race_id', 'horse_id'], how='left')
+                except Exception:
+                    pass
 
             # 着順・オッズを数値化
             self.df['rank'] = pd.to_numeric(self.df['着順'], errors='coerce')
@@ -1754,6 +1802,62 @@ class KeibaGUIv3:
         df_pred['印'] = df_pred.apply(apply_mark, axis=1)
         return df_pred
 
+    @staticmethod
+    def _add_relative_features_for_race(feat_df: pd.DataFrame) -> pd.DataFrame:
+        """レース内相対特徴量を計算して追加（Phase R4対応）"""
+        df = feat_df.copy()
+        n = len(df)
+        df['field_size'] = float(n)
+
+        SPECS = [
+            ('total_win_rate',   'field_win_rate_rank', False),
+            ('jockey_win_rate',  'field_jockey_rank',   False),
+            ('trainer_win_rate', 'field_trainer_rank',  False),
+            ('total_earnings',   'field_earnings_rank', False),
+            ('avg_last_3f',      'field_last3f_rank',   True),
+            ('avg_diff_seconds', 'field_diff_rank',     True),
+        ]
+
+        for src_col, out_col, ascending in SPECS:
+            if src_col not in df.columns:
+                df[out_col] = 0.5
+                continue
+            filled = df[src_col].fillna(
+                df[src_col].median() if not df[src_col].isna().all() else 0.0
+            )
+            raw_rank = filled.rank(method='min', ascending=ascending)
+            df[out_col] = ((n - raw_rank) / max(n - 1, 1)).clip(0.0, 1.0).fillna(0.5)
+
+        # Phase R5: field_escape_count, field_pace_advantage
+        if 'running_style_v2' in df.columns:
+            escape_count = int(df['running_style_v2'].isin([1, 2]).sum())
+            df['field_escape_count'] = float(escape_count)
+
+            def _pace_adv(style, ec):
+                s = int(style) if not pd.isna(style) else 3
+                if s in (1, 2):
+                    return max(0.0, 1.0 - (ec - 1) * 0.15)
+                if s in (3, 4):
+                    return min(1.0, 0.3 + (ec - 2) * 0.1)
+                return 0.5
+
+            df['field_pace_advantage'] = [
+                _pace_adv(s, escape_count) for s in df['running_style_v2']
+            ]
+        else:
+            df['field_escape_count']   = 3.0
+            df['field_pace_advantage'] = 0.5
+
+        # Phase R7: field_waku_rank（枠番バイアスのレース内相対ランク）
+        if 'waku_win_rate' in df.columns:
+            filled_wwr = df['waku_win_rate'].fillna(0.065)
+            raw_rank   = filled_wwr.rank(method='min', ascending=True)
+            df['field_waku_rank'] = ((n - raw_rank) / max(n - 1, 1)).clip(0.0, 1.0).fillna(0.5)
+        else:
+            df['field_waku_rank'] = 0.5
+
+        return df
+
     def predict_core(self, race_id, horses, race_info, has_odds, current_date=None):
         """
         UI非依存の予測コアロジック。GUIとバックテストの両方から呼ばれる。
@@ -1768,8 +1872,6 @@ class KeibaGUIv3:
         Returns:
             pd.DataFrame: 印付きdf_pred（'馬番','馬名','勝率予測','複勝予測','印' 等全カラム）
         """
-        predictions = []
-
         # pd.to_datetime互換のISO形式
         if current_date is None:
             current_date = datetime.now().strftime('%Y-%m-%d')
@@ -1789,27 +1891,28 @@ class KeibaGUIv3:
                 except (ValueError, TypeError):
                     pass
 
+        # ── Pass 1: 全馬の基本特徴量を収集 ─────────────────────────────
+        all_feats = []   # features dict per horse
+        all_meta  = []   # (horse, horse_data, horse_id) per horse
+
         for i, horse in enumerate(horses):
-            horse_id = horse['horse_id']
+            horse_id  = horse['horse_id']
+            horse_data = pd.DataFrame()
 
             if horse_id:
-                # horse_idを数値に変換
                 try:
                     horse_id_num = float(horse_id)
-                except:
+                except Exception:
                     horse_id_num = None
                     print(f"  NG horse_id変換失敗 [{horse['馬名']}]: {horse_id}")
 
                 if horse_id_num:
-                    # 実際の馬データから特徴量を計算
-                    # 常に対象レース自体を除外（リーケージ防止）
                     try:
                         race_id_int = int(race_id)
                         horse_data = self.df[(self.df['horse_id'] == horse_id_num) & (self.df['race_id'] != race_id_int)]
-                    except:
+                    except Exception:
                         horse_data = self.df[self.df['horse_id'] == horse_id_num]
 
-                    # 日付順にソート（古い順）
                     if len(horse_data) > 0 and 'date' in horse_data.columns:
                         def normalize_date(date_str):
                             """日付を比較可能な形式に正規化"""
@@ -1825,25 +1928,20 @@ class KeibaGUIv3:
                         horse_data = horse_data.copy()
                         horse_data['date_normalized'] = horse_data['date'].apply(normalize_date)
 
-                        # current_dateが指定されている場合、未来データも除外（リーケージ防止）
                         if current_date:
                             horse_data_dates = pd.to_datetime(horse_data['date_normalized'], errors='coerce')
                             cutoff = pd.to_datetime(current_date)
                             horse_data = horse_data[horse_data_dates <= cutoff]
 
                         horse_data = horse_data.sort_values('date_normalized', ascending=True)
-                else:
-                    horse_data = pd.DataFrame()  # 空のDataFrame
 
                 if len(horse_data) > 0:
-                    # 枠番を数値化
                     try:
                         waku_num = int(horse['枠番'])
-                    except:
+                    except Exception:
                         waku_num = None
                     race_info['waku'] = waku_num
 
-                    # 特徴量計算 (Phase R1: 46特徴量)
                     try:
                         features = calculate_horse_features_safe(
                             horse_id, self.df, current_date, self.sire_stats,
@@ -1866,13 +1964,11 @@ class KeibaGUIv3:
                         features = None
 
                     if features:
-                        # 特徴量の信頼性チェック
                         non_zero_count = sum(1 for v in features.values() if v != 0 and v != 0.0)
-                        feature_reliability = non_zero_count / len(features) if features else 0
+                        feature_reliability = non_zero_count / len(features)
                         print(f"  OK 特徴量計算成功 [{horse['馬名']}]: {len(features)}個 (有効: {non_zero_count}個, 信頼度: {feature_reliability*100:.0f}%)")
                     else:
                         print(f"  NG 特徴量がNone [{horse['馬名']}]")
-                        features = None
                 else:
                     print(f"  NG 馬データなし [{horse['馬名']}] (horse_id: {horse_id})")
                     features = None
@@ -1880,42 +1976,109 @@ class KeibaGUIv3:
                 print(f"  NG horse_id取得失敗 [{horse['馬名']}]")
                 features = None
 
-            # 特徴量が取得できなかった場合はデフォルト値
             if features is None:
                 print(f"  デフォルト値使用 [{horse['馬名']}]")
                 features = {feat: 0 for feat in model_features}
                 features['total_starts'] = 10
                 features['total_win_rate'] = 0.1
             else:
-                # 不足している特徴量は0で埋める
                 for feat in model_features:
                     if feat not in features:
                         features[feat] = 0
 
-            feat_df = pd.DataFrame([features])[model_features].fillna(0)
+            all_feats.append(features)
+            all_meta.append((horse, horse_data, horse_id))
 
-            # 予測 (Phase 14: lgb.Booster.predict() を使用)
-            pred_win_proba = float(self.model_win.predict(feat_df)[0])
-            pred_top3_proba = float(self.model_place.predict(feat_df)[0])
+        # ── Phase R6 レース単位特徴量を計算 ────────────────────────────
+        r6_race_features = {}
+        if any(f in model_features for f in ['daily_front_bias','daily_prior_races',
+                                              'horse_style_vs_bias','is_rainy','is_sunny']):
+            try:
+                rid_str = str(race_id).strip()
+                day_key  = rid_str[:10]
+                race_no  = int(rid_str[10:12]) if len(rid_str) >= 12 else 0
+
+                # 日次バイアス: 同日同コース前レースの勝ち馬1角通過順平均
+                import re as _re
+                def _parse_fc(s):
+                    if pd.isna(s): return np.nan
+                    nums = [int(p) for p in _re.split(r'[-\s]', str(s).strip()) if p.isdigit()]
+                    return float(nums[0]) if nums else np.nan
+
+                # self.df から同日前レースのデータを取得
+                _prior_bias = np.nan
+                _prior_cnt  = 0
+                if hasattr(self, 'df') and self.df is not None and len(self.df) > 0:
+                    _df = self.df
+                    _rid_col = _df['race_id'].astype(str).str.strip()
+                    _same_day = _rid_col.str[:10] == day_key
+                    _prior    = _rid_col[_same_day].apply(lambda x: int(x[10:12]) if len(x) >= 12 else 99) < race_no
+                    _prior_df = _df[_same_day & _prior.values]
+                    if len(_prior_df) > 0 and 'rank' in _prior_df.columns and '通過' in _prior_df.columns:
+                        _prior_df = _prior_df.copy()
+                        _prior_df['_rank_n'] = pd.to_numeric(_prior_df['rank'], errors='coerce')
+                        _winners = _prior_df[_prior_df['_rank_n'] == 1]
+                        _fc_vals = [_parse_fc(s) for s in _winners['通過']]
+                        _fc_vals = [v for v in _fc_vals if not np.isnan(v)]
+                        if _fc_vals:
+                            _prior_bias = float(np.mean(_fc_vals))
+                            _prior_cnt  = len(_fc_vals)
+
+                r6_race_features['daily_front_bias']  = _prior_bias if not np.isnan(_prior_bias) else 4.57
+                r6_race_features['daily_prior_races'] = float(_prior_cnt)
+
+                # 天候フラグ
+                _weather = race_info.get('weather', '') if race_info else ''
+                r6_race_features['is_rainy'] = 1 if _weather in ['雨', '小雨'] else 0
+                r6_race_features['is_sunny'] = 1 if _weather == '晴'         else 0
+
+            except Exception as _e:
+                print(f'  [R6] race-level特徴量計算エラー: {_e}')
+                r6_race_features = {
+                    'daily_front_bias': 4.57, 'daily_prior_races': 0.0,
+                    'is_rainy': 0, 'is_sunny': 0,
+                }
+
+        # R6 特徴量を各馬に付与 + horse_style_vs_bias を計算
+        for feats in all_feats:
+            for k, v in r6_race_features.items():
+                feats[k] = v
+            if 'horse_style_vs_bias' in model_features:
+                _fc  = feats.get('avg_first_corner_fixed', 5.0)
+                _db  = feats.get('daily_front_bias', 4.57)
+                feats['horse_style_vs_bias'] = float(_fc) - float(_db)
+
+        # ── レース内相対特徴量を付与（R4モデル対応） ──────────────────
+        # model_features に field_* 列が含まれている場合のみ計算
+        all_feat_df = pd.DataFrame(all_feats).reindex(columns=model_features).fillna(0)
+        if any(f.startswith('field_') for f in model_features):
+            all_feat_df = self._add_relative_features_for_race(all_feat_df)
+        all_feat_df = all_feat_df.reindex(columns=model_features).fillna(0)
+
+        # ── Pass 2: 予測 & 結果組み立て ────────────────────────────────
+        predictions = []
+        for i, (horse, horse_data, horse_id) in enumerate(all_meta):
+            feat_row = all_feat_df.iloc[[i]]
+
+            pred_win_proba  = float(self.model_win.predict(feat_row)[0])
+            pred_top3_proba = float(self.model_place.predict(feat_row)[0])
 
             # SHAP値計算（予測根拠 TOP5）
             shap_top5 = []
             if SHAP_AVAILABLE and self.shap_explainer_win is not None:
                 try:
-                    sv = self.shap_explainer_win.shap_values(feat_df)[0]
-                    pairs = sorted(zip(feat_df.columns.tolist(), sv),
+                    sv = self.shap_explainer_win.shap_values(feat_row)[0]
+                    pairs = sorted(zip(feat_row.columns.tolist(), sv),
                                    key=lambda x: abs(x[1]), reverse=True)[:5]
                     shap_top5 = pairs
                 except Exception as e:
                     shap_top5 = []
                     print(f"SHAP計算エラー({horse.get('馬名','')}): {e}")
 
-            # オッズが存在する場合のみ期待値とバリューを計算
             odds = horse.get('単勝オッズ', 0)
             expected_value = pred_win_proba * odds if odds > 0 else 0
             value = pred_win_proba - (1.0 / odds) if odds > 0 else 0
 
-            # 馬の過去成績サマリー
             stats_summary = ""
             if horse_id and len(horse_data) > 0:
                 total_races = len(horse_data)
@@ -1926,12 +2089,9 @@ class KeibaGUIv3:
                 recent_ranks = recent_ranks[::-1]
                 stats_summary = f"{total_races}戦{wins}勝{top3}着内 直近:{recent_ranks}"
 
-            # 特徴量信頼度を計算
-            feat_non_zero = (feat_df.iloc[0] != 0).sum()
+            feat_non_zero  = (feat_row.iloc[0] != 0).sum()
             feat_reliability = feat_non_zero / len(model_features)
-
-            # 15-20%確率帯判定（Phase 13で検証済み: 回収率143.9%）
-            is_sweet_spot = (0.15 <= pred_win_proba < 0.20)
+            is_sweet_spot  = (0.15 <= pred_win_proba < 0.20)
 
             predictions.append({
                 '馬番': horse['馬番'],
@@ -4021,6 +4181,72 @@ class KeibaGUIv3:
                 recommend_lines.append(f"  3連複BOX: {'-'.join(box_nums)} ({n_sanren}点/{n_sanren*100}円)")
             if n_box == 3:
                 recommend_lines.append(f"  3連単BOX: {'-'.join(box_nums)} (6点/600円)")
+
+        # === Rule4 単勝買い目（ペーパートレード準拠） ===
+        rule4_horses = []
+        for _, row in df_pred.iterrows():
+            pred_w = float(row.get('勝率予測', 0))
+            odds_v = float(row.get('オッズ', 0))
+            if odds_v <= 0:
+                continue
+            cond_a = pred_w >= 0.20 and 2.0 <= odds_v < 10.0
+            cond_b = pred_w >= 0.10 and odds_v >= 10.0
+            if cond_a or cond_b:
+                rule4_horses.append((row, cond_a, pred_w, odds_v))
+
+        if rule4_horses:
+            # 現在のバンクロールを paper_trade_log.csv から取得
+            try:
+                import csv as _csv
+                _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'paper_trade_log.csv')
+                _bankroll = 50000
+                if os.path.exists(_log_path):
+                    with open(_log_path, encoding='utf-8') as _f:
+                        _rows = list(_csv.DictReader(_f))
+                    _confirmed = [r for r in _rows if r.get('result') in ('的中', 'ハズレ')]
+                    if _confirmed:
+                        _bankroll = float(_confirmed[-1].get('bankroll', 50000) or 50000)
+            except Exception:
+                _bankroll = 50000
+
+            def _kelly_bet(pred_w, odds_v, cond_a, bankroll):
+                if odds_v <= 1:
+                    return 100
+                if cond_a:
+                    k = (pred_w * odds_v - 1.0) / (odds_v - 1.0)
+                    k = max(0.0, min(k, 0.5))
+                    amt = k * bankroll * 0.5
+                    amt = max(100, min(1000, amt))
+                    return int(round(amt / 100) * 100)
+                return 100
+
+            recommend_lines.append("")
+            recommend_lines.append("【Rule4 単勝買い目（ペーパートレード準拠）】")
+            recommend_lines.append(f"  バンクロール: {int(_bankroll):,}円")
+            for row, cond_a, pred_w, odds_v in rule4_horses:
+                bet = _kelly_bet(pred_w, odds_v, cond_a, _bankroll)
+                rule_label = "条件A(Kelly)" if cond_a else "条件B(固定)"
+                recommend_lines.append(
+                    f"  {rule_label}  {row['馬番']}番 {row['馬名']}"
+                    f"  勝率{pred_w*100:.1f}%  オッズ{odds_v:.1f}倍  → {bet}円"
+                )
+
+        # === ワイド・馬連 複勝上位3頭BOX ===
+        if '複勝予測' in df_pred.columns:
+            from itertools import combinations as _comb
+            top3 = df_pred.nlargest(3, '複勝予測')
+            if len(top3) >= 2:
+                top3_info = [(str(r['馬番']), r['馬名'], float(r['複勝予測'])*100)
+                             for _, r in top3.iterrows()]
+                recommend_lines.append("")
+                recommend_lines.append("【ワイド・馬連 複勝上位3頭BOX】（各100円）")
+                horses_str = "  / ".join(f"{u}番 {n}({p:.0f}%)" for u, n, p in top3_info)
+                recommend_lines.append(f"  対象: {horses_str}")
+                pairs = list(_comb(top3_info, 2))
+                wide_str  = "  ".join(f"{a[0]}-{b[0]}" for a, b in pairs)
+                umaren_str = "  ".join(f"{a[0]}-{b[0]}" for a, b in pairs)
+                recommend_lines.append(f"  ワイド: {wide_str}  ({len(pairs)}点/{len(pairs)*100}円)")
+                recommend_lines.append(f"  馬連:   {umaren_str}  ({len(pairs)}点/{len(pairs)*100}円)")
 
         # === SHAP 予測根拠（◎・○馬のみ） ===
         shap_targets = []

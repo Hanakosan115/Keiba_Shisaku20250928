@@ -16,8 +16,38 @@ import pandas as pd
 import numpy as np
 import warnings
 import re
+import json
+import os
 from datetime import datetime, timedelta
 warnings.filterwarnings('ignore')
+
+# Phase R7: 枠番バイアス lookup テーブルの読み込み
+_WAKU_STATS_PATH = os.path.join(os.path.dirname(__file__) or '.', 'models', 'phase_r7', 'waku_stats.json')
+_waku_lookup   = {}
+_waku_fallback = {}
+_waku_global_avg = 0.0725
+try:
+    with open(_WAKU_STATS_PATH, 'r', encoding='utf-8') as _f:
+        _waku_data = json.load(_f)
+    _waku_lookup     = _waku_data.get('waku_lookup', {})
+    _waku_fallback   = _waku_data.get('waku_fallback', {})
+    _waku_global_avg = _waku_data.get('global_avg', 0.0725)
+except Exception:
+    pass  # ファイルなしはデフォルト値を使用
+
+# Phase R8: 父馬×競馬場 lookup テーブルの読み込み
+_SIRE_TRACK_STATS_PATH = os.path.join(os.path.dirname(__file__) or '.', 'models', 'phase_r8', 'sire_track_stats.json')
+_sire_track_father   = {}
+_sire_track_mf       = {}
+_sire_track_global   = 0.0727
+try:
+    with open(_SIRE_TRACK_STATS_PATH, 'r', encoding='utf-8') as _f:
+        _sire_track_data = json.load(_f)
+    _sire_track_father = _sire_track_data.get('father', {})
+    _sire_track_mf     = _sire_track_data.get('mother_father', {})
+    _sire_track_global = _sire_track_data.get('global_wr', 0.0727)
+except Exception:
+    pass  # ファイルなしはデフォルト値を使用
 
 print("=" * 80)
 print("  Phase 13: 特徴量エンジニアリング（リーケージ排除版）")
@@ -102,21 +132,36 @@ def calculate_sire_stats(df_history):
         sire_data['rank'] = pd.to_numeric(sire_data['rank'], errors='coerce')
         sire_data_finished = sire_data[sire_data['rank'].notna()]
 
-        grouped = sire_data_finished.groupby(sire_type)['rank']
-        for sire_name, ranks in grouped:
+        def _wr(g):
+            return (g['rank'] == 1).mean() if len(g) > 0 else 0.0
+
+        for sire_name, group in sire_data_finished.groupby(sire_type):
             if sire_name not in sire_stats:
                 sire_stats[sire_name] = {}
-            total = len(ranks)
-            wins = (ranks == 1).sum()
-            top3 = (ranks <= 3).sum()
-            sire_stats[sire_name][f'{sire_type}_win_rate'] = wins / total if total > 0 else 0.0
+            total = len(group)
+            wins = (group['rank'] == 1).sum()
+            top3 = (group['rank'] <= 3).sum()
+            sire_stats[sire_name][f'{sire_type}_win_rate']  = wins / total if total > 0 else 0.0
             sire_stats[sire_name][f'{sire_type}_top3_rate'] = top3 / total if total > 0 else 0.0
+
+            # Phase R2: 血統細分化（芝・ダート・道悪・短距離・長距離）
+            turf_g  = group[group['course_type'] == '芝']                               if 'course_type'     in group.columns else group.iloc[0:0]
+            dirt_g  = group[group['course_type'] == 'ダート']                           if 'course_type'     in group.columns else group.iloc[0:0]
+            heavy_g = group[group['track_condition'].isin(['重', '不良'])]              if 'track_condition' in group.columns else group.iloc[0:0]
+            short_g = group[pd.to_numeric(group['distance'], errors='coerce') <= 1400]  if 'distance'        in group.columns else group.iloc[0:0]
+            long_g  = group[pd.to_numeric(group['distance'], errors='coerce') >= 2000]  if 'distance'        in group.columns else group.iloc[0:0]
+
+            sire_stats[sire_name][f'{sire_type}_turf_win_rate']  = _wr(turf_g)
+            sire_stats[sire_name][f'{sire_type}_dirt_win_rate']  = _wr(dirt_g)
+            sire_stats[sire_name][f'{sire_type}_heavy_win_rate'] = _wr(heavy_g)
+            sire_stats[sire_name][f'{sire_type}_short_win_rate'] = _wr(short_g)
+            sire_stats[sire_name][f'{sire_type}_long_win_rate']  = _wr(long_g)
 
     return sire_stats
 
 def calculate_trainer_jockey_stats(df_history):
     """調教師・騎手の成績を計算（訓練期間のデータのみ）"""
-    stats = {'trainer': {}, 'jockey': {}}
+    stats = {'trainer': {}, 'jockey': {}, 'jockey_track': {}}
 
     df_calc = df_history.copy()
     df_calc['rank'] = pd.to_numeric(df_calc['rank'], errors='coerce')
@@ -149,6 +194,18 @@ def calculate_trainer_jockey_stats(df_history):
                     'top3_rate': top3 / total if total > 0 else 0.0,
                     'starts': total
                 }
+
+    # Phase R2: 騎手×競馬場統計 (B-8)
+    if '騎手' in df_finished.columns and 'track_name' in df_finished.columns:
+        for (jockey_name, track_name), grp in df_finished.groupby(['騎手', 'track_name']):
+            key = f"{jockey_name}_{track_name}"
+            ranks = pd.to_numeric(grp['rank'], errors='coerce').dropna()
+            total = len(ranks)
+            stats['jockey_track'][key] = {
+                'win_rate':  (ranks == 1).sum() / total if total > 0 else 0.0,
+                'top3_rate': (ranks <= 3).sum() / total if total > 0 else 0.0,
+                'starts': total
+            }
 
     return stats
 
@@ -266,8 +323,13 @@ def calculate_horse_features_safe(
         # 通過順平均
         features['avg_passage_position'] = latest.get('avg_passage_position', 0.0)
 
-        # 上がり3F平均
-        features['avg_last_3f'] = latest.get('avg_last_3f', 0.0)
+        # 上がり3F平均（Agariカラムから計算。なければフォールバック）
+        if 'Agari' in horse_races.columns:
+            _agari = pd.to_numeric(horse_races['Agari'], errors='coerce').dropna()
+            _agari = _agari[_agari >= 25]  # 25秒未満の異常値（ハロンタイム等）を除外
+            features['avg_last_3f'] = float(_agari.mean()) if len(_agari) > 0 else 0.0
+        else:
+            features['avg_last_3f'] = latest.get('avg_last_3f', 0.0)
 
         # 重賞出走回数
         features['grade_race_starts'] = latest.get('grade_race_starts', 0)
@@ -290,6 +352,12 @@ def calculate_horse_features_safe(
             features['mother_father_win_rate'] = 0.0
             features['mother_father_top3_rate'] = 0.0
 
+        # C-1: 血統細分化（Phase R2）
+        _C1_KEYS = ['turf_win_rate', 'dirt_win_rate', 'heavy_win_rate', 'short_win_rate', 'long_win_rate']
+        for _k in _C1_KEYS:
+            features[f'father_{_k}']        = sire_stats_dict.get(father, {}).get(f'father_{_k}', 0.0) if father else 0.0
+            features[f'mother_father_{_k}'] = sire_stats_dict.get(mother_father, {}).get(f'mother_father_{_k}', 0.0) if mother_father else 0.0
+
         # ============================================================
         # Phase 10特徴量: 着差、脚質、クラス
         # ============================================================
@@ -305,6 +373,8 @@ def calculate_horse_features_safe(
             features['min_diff_seconds'] = 1.0
             features['prev_diff_seconds'] = 1.0
 
+        # C-4: class_adjusted_diff は訓練データで avg_diff_seconds と88.7%同値のため削除
+
         # 2. 通過順関連（脚質）
         if '通過' in horse_races.columns:
             first_corners = []
@@ -319,14 +389,71 @@ def calculate_horse_features_safe(
                 features['avg_first_corner'] = np.mean(first_corners)
                 features['avg_last_corner'] = np.mean(last_corners)
                 features['avg_position_change'] = np.mean([f - l for f, l in zip(first_corners, last_corners)])
+                # Phase R5: コーナー特徴量（_fixed版・sign修正）
+                _pc_v2 = np.mean([l - f for f, l in zip(first_corners, last_corners)])  # last-first（負=前進）
+                features['avg_first_corner_fixed'] = features['avg_first_corner']
+                features['avg_last_corner_fixed']  = features['avg_last_corner']
+                features['avg_position_change_v2'] = _pc_v2
+                _fc_r5 = features['avg_first_corner']
+                if _fc_r5 <= 2.5:
+                    features['running_style_v2'] = 1   # 逃げ
+                elif _fc_r5 <= 5.0:
+                    features['running_style_v2'] = 2   # 先行
+                elif _pc_v2 <= -3.0:
+                    features['running_style_v2'] = 4   # 追い込み
+                else:
+                    features['running_style_v2'] = 3   # 差し
             else:
                 features['avg_first_corner'] = 5.0
                 features['avg_last_corner'] = 5.0
                 features['avg_position_change'] = 0.0
+                features['avg_first_corner_fixed'] = 5.0
+                features['avg_last_corner_fixed']  = 5.0
+                features['avg_position_change_v2'] = 0.0
+                features['running_style_v2'] = 3
         else:
             features['avg_first_corner'] = 5.0
             features['avg_last_corner'] = 5.0
             features['avg_position_change'] = 0.0
+            features['avg_first_corner_fixed'] = 5.0
+            features['avg_last_corner_fixed']  = 5.0
+            features['avg_position_change_v2'] = 0.0
+            features['running_style_v2'] = 3
+
+        # B-6: 脚質カテゴリ（running_style_category優先・フォールバックは通過順）
+        _cat_map = {'front_runner': 1, 'stalker': 2, 'midpack': 3, 'closer': 4}
+        if 'running_style_category' in horse_races.columns:
+            _valid_cats = horse_races['running_style_category'].dropna()
+            _valid_cats = _valid_cats[_valid_cats.isin(_cat_map.keys())]
+            if len(_valid_cats) > 0:
+                features['running_style'] = _cat_map.get(_valid_cats.mode().iloc[0], 3)
+            else:
+                features['running_style'] = 3  # デフォルト: midpack
+        else:
+            _fc = features.get('avg_first_corner', 5.0)
+            _lc = features.get('avg_last_corner', 5.0)
+            if _fc <= 2.5:
+                features['running_style'] = 1
+            elif _fc <= 4.5:
+                features['running_style'] = 2
+            elif _lc < _fc - 1.5:
+                features['running_style'] = 3
+            else:
+                features['running_style'] = 4
+
+        # C-5: pace_preference は avg_position_change と完全同値のため削除
+
+        # C-5: 末脚強度 — 3ポジション以上前進した割合（Phase R2）
+        _strong = 0
+        _total_p = 0
+        if '通過' in horse_races.columns:
+            for _, _r in horse_races.iterrows():
+                _parts = [p for p in re.split(r'[-\s]', str(_r.get('通過', ''))) if p.isdigit()]
+                if len(_parts) >= 2:
+                    if int(_parts[0]) - int(_parts[-1]) >= 3:
+                        _strong += 1
+                    _total_p += 1
+        features['finish_strength'] = _strong / _total_p if _total_p > 0 else 0.0
 
         # 3. クラス移動
         if race_track:
@@ -355,6 +482,29 @@ def calculate_horse_features_safe(
         else:
             features['heavy_track_win_rate'] = latest.get('heavy_track_win_rate', 0.0)
 
+        # Phase R5: slightly_heavy_win_rate（稍重馬場勝率）
+        if 'track_condition' in horse_races.columns:
+            _sh = horse_races[horse_races['track_condition'].str.strip().isin(['稍重'])].copy()
+            _sh['rank_n'] = pd.to_numeric(_sh['rank'], errors='coerce')
+            _sh_fin = _sh[_sh['rank_n'].notna()]
+            features['slightly_heavy_win_rate'] = (
+                (_sh_fin['rank_n'] == 1).sum() / len(_sh_fin) if len(_sh_fin) > 0 else 0.0
+            )
+        else:
+            features['slightly_heavy_win_rate'] = 0.0
+
+        # B-9: good_track_win_rate（良馬場勝率）（Phase R2）
+        if 'track_condition' in horse_races.columns:
+            good_races = horse_races[horse_races['track_condition'] == '良'].copy()
+            good_races['rank'] = pd.to_numeric(good_races['rank'], errors='coerce')
+            good_finished = good_races[good_races['rank'].notna()]
+            features['good_track_win_rate'] = (
+                (good_finished['rank'] == 1).sum() / len(good_finished)
+                if len(good_finished) > 0 else 0.0
+            )
+        else:
+            features['good_track_win_rate'] = 0.0
+
         # B-5: distance_change（前走との距離差）
         if race_distance is not None:
             try:
@@ -367,6 +517,48 @@ def calculate_horse_features_safe(
                 features['distance_change'] = 0.0
         else:
             features['distance_change'] = 0.0
+
+        # B-7: 直近3走トレンド（Phase R2）
+        if len(horse_races) >= 2:
+            _recent = horse_races.tail(3).copy()
+            _recent['rank_num'] = pd.to_numeric(_recent['rank'], errors='coerce')
+            _fin = _recent[_recent['rank_num'].between(1, 18)]
+            if len(_fin) >= 2:
+                features['recent_3race_improvement'] = float(
+                    _fin['rank_num'].iloc[0] - _fin['rank_num'].iloc[-1]
+                )
+            else:
+                features['recent_3race_improvement'] = 0.0
+        else:
+            features['recent_3race_improvement'] = 0.0
+
+        # Phase R6: prev_agari_relative（前走上がり3F vs 同レースフィールド平均）
+        try:
+            if len(horse_races) > 0 and 'Agari' in horse_races.columns and df_all is not None:
+                # 前走レースの Agari 取得
+                _prev = horse_races.sort_values('date').iloc[-1]
+                _prev_rid = _prev.get('race_id')
+                _prev_agari = pd.to_numeric(_prev.get('Agari'), errors='coerce')
+                if pd.notna(_prev_agari) and 20.0 <= _prev_agari <= 50.0 and _prev_rid is not None:
+                    # 同レースの全馬 Agari 平均
+                    try:
+                        _prev_rid_val = float(_prev_rid)
+                        _field = df_all[df_all['race_id'] == _prev_rid_val]['Agari']
+                    except Exception:
+                        _prev_rid_str = str(_prev_rid).strip()
+                        _field = df_all[df_all['race_id'].astype(str).str.strip() == _prev_rid_str]['Agari']
+                    _field_agari = pd.to_numeric(_field, errors='coerce')
+                    _field_valid = _field_agari[(20.0 <= _field_agari) & (_field_agari <= 50.0)]
+                    if len(_field_valid) >= 2:
+                        features['prev_agari_relative'] = float(_prev_agari - _field_valid.mean())
+                    else:
+                        features['prev_agari_relative'] = 0.0
+                else:
+                    features['prev_agari_relative'] = 0.0
+            else:
+                features['prev_agari_relative'] = 0.0
+        except Exception:
+            features['prev_agari_relative'] = 0.0
 
     else:
         # データなし（デビュー前や新馬）
@@ -395,6 +587,29 @@ def calculate_horse_features_safe(
         features['current_class'] = 3
         features['heavy_track_win_rate'] = 0.0
         features['distance_change'] = 0.0
+        # Phase R2 defaults
+        features['father_turf_win_rate']        = 0.0
+        features['father_dirt_win_rate']        = 0.0
+        features['father_heavy_win_rate']       = 0.0
+        features['father_short_win_rate']       = 0.0
+        features['father_long_win_rate']        = 0.0
+        features['mother_father_turf_win_rate']  = 0.0
+        features['mother_father_dirt_win_rate']  = 0.0
+        features['mother_father_heavy_win_rate'] = 0.0
+        features['mother_father_short_win_rate'] = 0.0
+        features['mother_father_long_win_rate']  = 0.0
+        features['running_style']               = 3
+        features['recent_3race_improvement']    = 0.0
+        features['good_track_win_rate']         = 0.0
+        features['finish_strength']             = 0.0
+        # Phase R5 defaults
+        features['avg_first_corner_fixed'] = 5.0
+        features['avg_last_corner_fixed']  = 5.0
+        features['avg_position_change_v2'] = 0.0
+        features['running_style_v2']       = 3
+        features['slightly_heavy_win_rate'] = 0.0
+        # Phase R6 defaults
+        features['prev_agari_relative'] = 0.0
 
     # ============================================================
     # Phase R1 追加特徴量 (B-2, B-3, B-4) — 現レース情報から取得
@@ -470,6 +685,16 @@ def calculate_horse_features_safe(
         features['jockey_top3_rate'] = 0.0
         features['jockey_starts'] = 0
 
+    # B-8: 騎手×競馬場統計（Phase R2）
+    _jt_key = f"{jockey_name}_{race_track}" if jockey_name and race_track else None
+    _jt_stats = trainer_jockey_stats.get('jockey_track', {})
+    if _jt_key and _jt_key in _jt_stats:
+        features['jockey_track_win_rate']  = _jt_stats[_jt_key]['win_rate']
+        features['jockey_track_top3_rate'] = _jt_stats[_jt_key]['top3_rate']
+    else:
+        features['jockey_track_win_rate']  = features.get('jockey_win_rate', 0.0)
+        features['jockey_track_top3_rate'] = features.get('jockey_top3_rate', 0.0)
+
     # ============================================================
     # コース・馬場条件
     # ============================================================
@@ -529,6 +754,191 @@ def calculate_horse_features_safe(
             features['frame_number'] = 4
     else:
         features['frame_number'] = 4
+
+    # ============================================================
+    # Phase R7: 枠番バイアス + 騎手交代特徴量
+    # ============================================================
+
+    # waku_win_rate: 枠番×競馬場×距離帯×コース種別の歴史的勝率
+    try:
+        _waku = int(current_frame) if current_frame else 0
+        _dist = float(race_distance) if race_distance else 0.0
+        _ct   = str(race_course_type) if race_course_type else ''
+        _tk   = str(race_track) if race_track else ''
+        if _dist <= 1400:
+            _db = 'short'
+        elif _dist <= 1800:
+            _db = 'mid'
+        else:
+            _db = 'long'
+        _key1 = f'{_tk}|{_ct}|{_db}|{_waku}'
+        _key2 = f'{_ct}|{_db}|{_waku}'
+        if _key1 in _waku_lookup:
+            features['waku_win_rate'] = _waku_lookup[_key1]
+        elif _key2 in _waku_fallback:
+            features['waku_win_rate'] = _waku_fallback[_key2]
+        else:
+            features['waku_win_rate'] = _waku_global_avg
+    except Exception:
+        features['waku_win_rate'] = _waku_global_avg
+
+    # jockey_changed + jockey_change_quality
+    try:
+        _prev_jockey = None
+        if len(horse_races) > 0:
+            _jcol = None
+            for _c in ['JockeyName', '騎手', 'jockey_name']:
+                if _c in horse_races.columns:
+                    _jcol = _c
+                    break
+            if _jcol:
+                _last = horse_races.sort_values('date_normalized').iloc[-1]
+                _prev_jockey = str(_last[_jcol]) if pd.notna(_last[_jcol]) else None
+
+        if _prev_jockey is None:
+            features['jockey_changed'] = 0.0
+            features['jockey_change_quality'] = 0.0
+        else:
+            features['jockey_changed'] = 1.0 if (jockey_name and jockey_name != _prev_jockey) else 0.0
+            _cur_wr  = trainer_jockey_stats.get('jockey', {}).get(jockey_name or '', {}).get('win_rate', _waku_global_avg)
+            _prev_wr = trainer_jockey_stats.get('jockey', {}).get(_prev_jockey, {}).get('win_rate', _waku_global_avg)
+            features['jockey_change_quality'] = float(_cur_wr - _prev_wr)
+    except Exception:
+        features['jockey_changed'] = 0.0
+        features['jockey_change_quality'] = 0.0
+
+    # ============================================================
+    # Phase R8: 血統×競馬場 / 近況 / 馬個体×条件 特徴量
+    # ============================================================
+
+    # B: father_track_win_rate / mother_father_track_win_rate
+    try:
+        _father = str(sire_stats_dict.get('_father_name_', '')) if sire_stats_dict else ''
+        # sire_statsに父馬名が入っていないので horse_races から取得
+        _father_name = ''
+        _mf_name = ''
+        if len(horse_races) > 0:
+            for _fc in ['father', 'Father']:
+                if _fc in horse_races.columns:
+                    _fv = horse_races[_fc].dropna()
+                    if len(_fv) > 0:
+                        _father_name = str(_fv.iloc[-1])
+                    break
+            for _mc in ['mother_father', 'MotherFather']:
+                if _mc in horse_races.columns:
+                    _mv = horse_races[_mc].dropna()
+                    if len(_mv) > 0:
+                        _mf_name = str(_mv.iloc[-1])
+                    break
+        _tk = str(race_track) if race_track else ''
+        _f_key  = f'{_father_name}||{_tk}'
+        _fo_key = f'{_father_name}||__overall__'
+        _m_key  = f'{_mf_name}||{_tk}'
+        _mo_key = f'{_mf_name}||__overall__'
+        features['father_track_win_rate'] = float(
+            _sire_track_father.get(_f_key,
+            _sire_track_father.get(_fo_key, _sire_track_global)))
+        features['mother_father_track_win_rate'] = float(
+            _sire_track_mf.get(_m_key,
+            _sire_track_mf.get(_mo_key, _sire_track_global)))
+    except Exception:
+        features['father_track_win_rate']        = _sire_track_global
+        features['mother_father_track_win_rate'] = _sire_track_global
+
+    # C: consecutive_losses / form_trend / best_distance_diff
+    try:
+        if len(horse_races) > 0:
+            _hr_sorted = horse_races.sort_values('date_normalized')
+            _ranks = pd.to_numeric(_hr_sorted.get('Rank', _hr_sorted.get('rank', None)), errors='coerce').fillna(99)
+
+            # consecutive_losses: 直近の連続着外（3着以内なし）
+            _c_loss = 0
+            for _r in reversed(_ranks.values.tolist()):
+                if _r <= 3:
+                    break
+                _c_loss += 1
+            features['consecutive_losses'] = float(_c_loss)
+
+            # form_trend: 直近3走の着順変化（正=改善）
+            _recent = _ranks.values[-3:] if len(_ranks) >= 3 else _ranks.values
+            if len(_recent) >= 2:
+                features['form_trend'] = float(_recent[0] - _recent[-1]) / max(len(_recent)-1, 1)
+            else:
+                features['form_trend'] = 0.0
+
+            # best_distance_diff: 得意距離帯との乖離
+            _dists = pd.to_numeric(_hr_sorted.get('distance', None), errors='coerce').dropna()
+            _is_win_hr = (_ranks <= 1).astype(float)
+            if len(_dists) >= 3:
+                _d_buckets = ((_dists // 200) * 200).astype(int)
+                _dist_df = pd.DataFrame({'bucket': _d_buckets.values, 'win': _is_win_hr.values})
+                _dist_agg = _dist_df.groupby('bucket')['win'].agg(['sum','count'])
+                _dist_agg = _dist_agg[_dist_agg['count'] >= 3]
+                if len(_dist_agg) > 0:
+                    _best_d = int(_dist_agg['sum'].div(_dist_agg['count']).idxmax())
+                    _cur_d  = float(race_distance) if race_distance else _best_d
+                    features['best_distance_diff'] = abs(_cur_d - _best_d) / 1000.0
+                else:
+                    features['best_distance_diff'] = 0.0
+            else:
+                features['best_distance_diff'] = 0.0
+        else:
+            features['consecutive_losses'] = 0.0
+            features['form_trend']         = 0.0
+            features['best_distance_diff'] = 0.0
+    except Exception:
+        features['consecutive_losses'] = 0.0
+        features['form_trend']         = 0.0
+        features['best_distance_diff'] = 0.0
+
+    # D: horse_waku_win_rate / large_field_win_rate
+    try:
+        if len(horse_races) > 0:
+            _hr_sorted = horse_races.sort_values('date_normalized')
+            _hr_ranks  = pd.to_numeric(_hr_sorted.get('Rank', _hr_sorted.get('rank', None)), errors='coerce').fillna(99)
+            _hr_is_win = (_hr_ranks == 1).astype(float)
+
+            # horse_waku_win_rate: この馬の現在枠番での過去勝率
+            _waku_col = None
+            for _wc in ['Waku', 'waku', '枠番']:
+                if _wc in _hr_sorted.columns:
+                    _waku_col = _wc
+                    break
+            if _waku_col and current_frame:
+                _hw = pd.to_numeric(_hr_sorted[_waku_col], errors='coerce')
+                _same_waku = (_hw == int(current_frame))
+                if _same_waku.sum() >= 2:
+                    features['horse_waku_win_rate'] = float(_hr_is_win[_same_waku].mean())
+                else:
+                    features['horse_waku_win_rate'] = _sire_track_global
+            else:
+                features['horse_waku_win_rate'] = _sire_track_global
+
+            # large_field_win_rate: 12頭以上のレースでの過去勝率
+            # field_size相当を race_id の group count で推定（近似）
+            # 簡易版: horse_races のうちランダムサンプルで推定は困難なので
+            # 近似として horses_count列があれば使用、なければグローバル値
+            _fsize_col = None
+            for _fsc in ['field_size', 'race_field_size', 'horses_count']:
+                if _fsc in _hr_sorted.columns:
+                    _fsize_col = _fsc
+                    break
+            if _fsize_col:
+                _fsizes = pd.to_numeric(_hr_sorted[_fsize_col], errors='coerce').fillna(0)
+                _large = (_fsizes >= 12)
+                if _large.sum() >= 3:
+                    features['large_field_win_rate'] = float(_hr_is_win[_large].mean())
+                else:
+                    features['large_field_win_rate'] = float(_hr_is_win.mean()) if len(_hr_is_win) > 0 else _sire_track_global
+            else:
+                # field_size列なし → 全体勝率で近似
+                features['large_field_win_rate'] = float(_hr_is_win.mean()) if len(_hr_is_win) > 0 else _sire_track_global
+        else:
+            features['horse_waku_win_rate']  = _sire_track_global
+            features['large_field_win_rate'] = _sire_track_global
+    except Exception:
+        features['horse_waku_win_rate']  = _sire_track_global
+        features['large_field_win_rate'] = _sire_track_global
 
     return features
 
