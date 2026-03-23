@@ -167,6 +167,11 @@ FEATURE_NAMES_JP = {
     'field_waku_rank':              'レース内枠番有利度',
     'jockey_changed':               '騎手交代フラグ',
     'jockey_change_quality':        '騎手交代品質(昇格=正)',
+    # Phase R10 調教タイム特徴量
+    'training_3f_relative':         '調教3Fタイム偏差(同日同コース比)',
+    'training_last1f_rel':          '調教上がり1Fタイム偏差',
+    'training_finish_score':        '調教脚色スコア(0一杯〜3馬也)',
+    'training_course_type':         '調教コース種別(0坂路1W2芝3ダ)',
 }
 
 
@@ -1802,6 +1807,167 @@ class KeibaGUIv3:
         df_pred['印'] = df_pred.apply(apply_mark, axis=1)
         return df_pred
 
+    # ── Phase R10: 調教タイム特徴量 ────────────────────────────────
+
+    _TRAINING_FINISH_MAP = {
+        '一杯': 0.0, '強め': 1.0, '末強め': 2.0, '馬也': 3.0,
+        '直強め': 2.0, '外強め': 1.0, '内強め': 1.0,
+    }
+    _TRAINING_COURSE_MAP = {
+        '坂路': 0.0, '美坂': 0.0, '栗坂': 0.0, '南坂': 0.0,
+        'Ｗ': 1.0, '美Ｗ': 1.0, '栗Ｗ': 1.0, '南Ｗ': 1.0,
+        '芝': 2.0, '美芝': 2.0, '栗芝': 2.0,
+        'ダ': 3.0, '美ダ': 3.0, '栗ダ': 3.0,
+    }
+
+    @staticmethod
+    def _parse_training_laps(laps_str: str):
+        """
+        タイムラップ文字列から 3Fタイム と 上がり1Fタイム を抽出。
+        Returns (t3f, t1f) のタプル。取得不能時は (None, None)。
+        """
+        import re as _re
+        if not isinstance(laps_str, str) or not laps_str.strip():
+            return None, None
+        nums = _re.findall(r'\d+\.\d+', laps_str.strip())
+        if len(nums) < 4:
+            return None, None
+        try:
+            all_vals = [float(x) for x in nums]
+            cumulative = [all_vals[i] for i in range(0, len(all_vals), 2)]
+            if len(cumulative) < 2:
+                return None, None
+            last1f = cumulative[-1]
+            last3f = cumulative[-3] if len(cumulative) >= 3 else None
+            if last1f < 10 or last1f > 20:
+                last1f = None
+            if last3f is not None and (last3f < 30 or last3f > 70):
+                last3f = None
+            return last3f, last1f
+        except Exception:
+            return None, None
+
+    @classmethod
+    def _classify_training_course(cls, course: str) -> float:
+        if not isinstance(course, str):
+            return 1.0  # 不明→W相当
+        for key, val in cls._TRAINING_COURSE_MAP.items():
+            if key in course:
+                return val
+        return 1.0
+
+    @classmethod
+    def _classify_training_finish(cls, finish: str) -> float:
+        if not isinstance(finish, str):
+            return 1.0  # 不明→強め相当
+        for key, val in cls._TRAINING_FINISH_MAP.items():
+            if key in finish:
+                return val
+        return 1.0
+
+    def _add_training_features_for_race(
+        self, race_id: str, all_feat_df, horses: list
+    ):
+        """
+        oikiri.html?race_id=...&type=2 をスクレイプして
+        調教タイム特徴量を all_feat_df に付与する（Phase R10対応）。
+        失敗時はデフォルト値（0.0 / 1.0）のまま返す。
+        """
+        DEFAULT_3F_REL = 0.0
+        DEFAULT_1F_REL = 0.0
+        DEFAULT_FINISH = 1.0
+        DEFAULT_COURSE = 1.0
+
+        df = all_feat_df.copy()
+        for col, default in [
+            ('training_3f_relative',  DEFAULT_3F_REL),
+            ('training_last1f_rel',   DEFAULT_1F_REL),
+            ('training_finish_score', DEFAULT_FINISH),
+            ('training_course_type',  DEFAULT_COURSE),
+        ]:
+            if col not in df.columns:
+                df[col] = default
+
+        try:
+            import requests as _req
+            from bs4 import BeautifulSoup as _BS
+
+            url = (f'https://race.netkeiba.com/race/oikiri.html'
+                   f'?race_id={race_id}&type=2')
+            headers = {
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/120.0.0.0 Safari/537.36'
+                )
+            }
+            resp = _req.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return df
+            resp.encoding = 'euc-jp'
+            soup = _BS(resp.text, 'html.parser')
+            table = soup.find('table')
+            if not table:
+                return df
+
+            rows_data = []
+            for row in table.find_all('tr')[1:]:
+                cols = [c.get_text(strip=True) for c in row.find_all('td')]
+                if len(cols) < 13:
+                    continue
+                umaban = str(cols[1]).strip().replace('.0', '')
+                t3f, t1f = self._parse_training_laps(cols[8])
+                rows_data.append({
+                    'umaban':        umaban,
+                    'course_str':    cols[5],
+                    'baba':          cols[6],
+                    't3f':           t3f,
+                    't1f':           t1f,
+                    'course_type':   self._classify_training_course(cols[5]),
+                    'finish_score':  self._classify_training_finish(cols[10]),
+                })
+
+            if not rows_data:
+                return df
+
+            import pandas as _pd
+            tr = _pd.DataFrame(rows_data)
+
+            # 同コース・同馬場グループ内での相対タイム偏差
+            def _rel(series):
+                med = series.median()
+                return series - med if not _pd.isna(med) else series
+
+            tr['t3f_rel'] = tr.groupby(['course_str', 'baba'])['t3f'].transform(_rel)
+            tr['t1f_rel'] = tr.groupby(['course_str', 'baba'])['t1f'].transform(_rel)
+
+            # 同一馬番の最初の行を使用
+            tr_latest = tr.groupby('umaban').first().reset_index()
+
+            for i, horse in enumerate(horses):
+                umaban = str(horse.get('馬番', horse.get('umaban', ''))).strip()
+                umaban = umaban.replace('.0', '').replace(' ', '')
+                row = tr_latest[tr_latest['umaban'] == umaban]
+                if row.empty:
+                    continue
+                r = row.iloc[0]
+                if _pd.notna(r['t3f_rel']):
+                    df.at[i, 'training_3f_relative'] = float(r['t3f_rel'])
+                if _pd.notna(r['t1f_rel']):
+                    df.at[i, 'training_last1f_rel'] = float(r['t1f_rel'])
+                df.at[i, 'training_course_type']  = float(r['course_type'])
+                df.at[i, 'training_finish_score'] = float(r['finish_score'])
+
+            n_covered = (df['training_3f_relative'] != DEFAULT_3F_REL).sum()
+            print(f"  調教データ取得: {n_covered}/{len(horses)}頭分")
+
+        except Exception as e:
+            print(f"  調教データ取得失敗（デフォルト使用）: {e}")
+
+        return df
+
+    # ────────────────────────────────────────────────────────────────
+
     @staticmethod
     def _add_relative_features_for_race(feat_df: pd.DataFrame) -> pd.DataFrame:
         """レース内相対特徴量を計算して追加（Phase R4対応）"""
@@ -2053,6 +2219,14 @@ class KeibaGUIv3:
         all_feat_df = pd.DataFrame(all_feats).reindex(columns=model_features).fillna(0)
         if any(f.startswith('field_') for f in model_features):
             all_feat_df = self._add_relative_features_for_race(all_feat_df)
+
+        # ── 調教タイム特徴量を付与（R10モデル対応） ──────────────────
+        _r10_feats = {'training_3f_relative', 'training_last1f_rel',
+                      'training_finish_score', 'training_course_type'}
+        if _r10_feats & set(model_features):
+            all_feat_df = self._add_training_features_for_race(
+                race_id, all_feat_df, horses)
+
         all_feat_df = all_feat_df.reindex(columns=model_features).fillna(0)
 
         # ── Pass 2: 予測 & 結果組み立て ────────────────────────────────
