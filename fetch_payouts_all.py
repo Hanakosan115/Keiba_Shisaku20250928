@@ -7,7 +7,7 @@
   (pool_roi.py がそのまま読める)
 - 取得済み(v=2)のレースは飛ばすので、止めても続きから再開できる。
   旧キャッシュ (--out に旧 payout_cache.pkl を指定) もワイド欠損レースは取り直す。
-- 1秒間隔 (--sleep)。403/429/連続エラーが続いたら自動で停止する。
+- 7秒前後の間隔 (--sleep、±15%ゆらぐ)。403/429/連続エラーが続いたら自動で停止する。
 - 取得はnetkeibaへのアクセスになる。負荷と利用規約に配慮し、必要な分だけ実行すること。
 """
 import argparse
@@ -74,7 +74,7 @@ def parse_payouts(html, race_id=None):
 
 
 def fetch(race_id, sleep, session):
-    time.sleep(sleep + random.random() * 0.3)
+    time.sleep(max(0.0, random.uniform(sleep * 0.85, sleep * 1.15)))  # 間隔は±15%ゆらす
     r = session.get(URL.format(race_id), headers={"User-Agent": UA}, timeout=30)
     if r.status_code in (403, 429):
         raise PermissionError(f"HTTP {r.status_code} (アクセス制限の可能性)")
@@ -96,7 +96,7 @@ def main():
     ap.add_argument("--out", default="payout_cache_all.pkl")
     ap.add_argument("--years", type=int, nargs="*")
     ap.add_argument("--sample", type=int, help="ランダムにNレースだけ取得 (seed固定)")
-    ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--sleep", type=float, default=7.0, help="リクエスト間隔の中心(秒)。実際は±15%でゆらぐ")
     ap.add_argument("--max-errors", type=int, default=5, help="連続エラーでこの回数に達したら停止")
     a = ap.parse_args()
 
@@ -117,7 +117,7 @@ def main():
             cache = {int(k): v for k, v in pickle.load(f).items()}
     todo = [i for i in ids if cache.get(i, {}).get("v") != 2]
     print(f"対象 {len(ids)} レース / 取得済み(v2) {len(ids) - len(todo)} / これから {len(todo)}"
-          f" (約 {len(todo) * (a.sleep + 0.15) / 3600:.1f} 時間)")
+          f" (約 {len(todo) * a.sleep / 3600:.1f} 時間)")
 
     session = requests.Session()
     errors = 0
