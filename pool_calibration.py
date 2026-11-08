@@ -21,11 +21,36 @@ import numpy as np
 import pandas as pd
 
 
-def load(path, min_horses):
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df = df.rename(columns={df.columns[0]: df.columns[0].lstrip("﻿")})
-    df["Rank"] = pd.to_numeric(df["Rank"], errors="coerce")
-    df["Odds"] = pd.to_numeric(df["Odds"], errors="coerce")
+def read_results(path, odds_col=None):
+    """CSVを読み、オッズ列の選択・崩れ行/重複の除去を行う。列: race_id, Umaban, Rank, Odds*"""
+    df = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    df = df.rename(columns={df.columns[0]: df.columns[0].lstrip("\ufeff")})
+    n0 = len(df)
+    rid = df["race_id"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    df = df[rid.str.fullmatch(r"\d{12}")].copy()
+    df["race_id"] = rid[df.index].astype("int64")
+    print(f"race_id が12桁数字でない行を除去: {n0 - len(df)}")
+    if odds_col is None:
+        cands = [c for c in ("Odds", "Odds_x", "Odds_y") if c in df.columns]
+        counts = {c: int(pd.to_numeric(df[c], errors="coerce").notna().sum()) for c in cands}
+        odds_col = max(counts, key=counts.get)
+        print(f"オッズ列の候補(数値の件数): {counts} → '{odds_col}' を使用")
+    for c, name in ((odds_col, "Odds"), ("Rank", "Rank"), ("Umaban", "Umaban")):
+        df[name] = pd.to_numeric(df[c], errors="coerce")
+    n1 = len(df)
+    df = df.dropna(subset=["Umaban"]).drop_duplicates(["race_id", "Umaban"], keep="first")
+    print(f"(race_id, Umaban) 重複を除去: {n1 - len(df)}")
+    ov = df.dropna(subset=["Odds"]).groupby("race_id")["Odds"].apply(lambda o: (1 / o[o > 0]).sum())
+    if len(ov):
+        m = float(ov.median())
+        print(f"単勝オッズ逆数の合計(中央値) = {m:.3f}  (確定オッズなら約1.25)")
+        if not 1.15 <= m <= 1.40:
+            print("  ⚠ 確定オッズと異なる可能性があります。--odds-col で別の列を試してください")
+    return df
+
+
+def load(path, min_horses, odds_col=None):
+    df = read_results(path, odds_col)
     df = df.dropna(subset=["Odds"])
     df = df[df["Odds"] > 0]
     races = []
@@ -168,9 +193,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv")
     ap.add_argument("--min-horses", type=int, default=6)
+    ap.add_argument("--odds-col", default=None, help="単勝オッズ列名 (省略時は自動選択)")
     a = ap.parse_args()
 
-    races = load(a.csv, a.min_horses)
+    races = load(a.csv, a.min_horses, a.odds_col)
     print(f"対象レース数: {len(races)}")
     if len(races) < 30:
         sys.exit("レース数が少なすぎます")

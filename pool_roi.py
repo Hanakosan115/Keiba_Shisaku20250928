@@ -27,7 +27,7 @@ from itertools import combinations, permutations
 import numpy as np
 import pandas as pd
 
-from pool_calibration import fit_gamma, implied_power, implied_proportional
+from pool_calibration import fit_gamma, implied_power, read_results
 
 _IDX_CACHE = {}
 
@@ -39,12 +39,9 @@ def _combos(n, k):
     return _IDX_CACHE[key]
 
 
-def load_races(csv_path, min_horses=6):
-    df = pd.read_csv(csv_path, encoding="utf-8-sig")
-    df = df.rename(columns={df.columns[0]: df.columns[0].lstrip("﻿")})
-    for c in ("Rank", "Odds", "Umaban"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["Odds", "Umaban"])
+def load_races(csv_path, min_horses=6, odds_col=None):
+    df = read_results(csv_path, odds_col)
+    df = df.dropna(subset=["Odds"])
     df = df[df["Odds"] > 0]
     races = []
     for rid, g in df.groupby("race_id"):
@@ -174,9 +171,10 @@ def main():
     ap.add_argument("payouts")
     ap.add_argument("--train-until", type=int, default=None)
     ap.add_argument("--min-horses", type=int, default=6)
+    ap.add_argument("--odds-col", default=None, help="単勝オッズ列名 (省略時は自動選択)")
     a = ap.parse_args()
 
-    races = load_races(a.csv, a.min_horses)
+    races = load_races(a.csv, a.min_horses, a.odds_col)
     payouts = load_payouts(a.payouts)
     races = [r for r in races if r["race_id"] in payouts]
     print(f"配当と突合できたレース: {len(races)}")
